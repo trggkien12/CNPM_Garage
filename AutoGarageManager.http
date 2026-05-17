@@ -1,0 +1,6 @@
+@AutoGarageManager_HostAddress = http://localhost:5121
+
+GET {{AutoGarageManager_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

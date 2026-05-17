@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <!-- SCRIPT BẢO VỆ ADMIN -->
+    <script>
+    const user = JSON.parse(sessionStorage.getItem('KKTH_ACTIVE_USER') || localStorage.getItem('KKTH_ACTIVE_USER'));
+    if (!user || user.role !== 'admin') {
+        window.location.href = 'login.html'; 
+    }
+    </script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TH2K</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+        :root {
+            --bg: #f8fafc; --surface: #ffffff; --text: #1e293b; --muted: #64748b; --border: #e2e8f0;
+            --blue: #2563eb; --blue-light: #eff6ff; --green: #10b981; --green-light: #dcfce7;
+            --red: #ef4444; --red-light: #fee2e2; --orange: #f59e0b; --orange-light: #fef3c7;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+        body { background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; }
+
+        /* SIDEBAR */
+        .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; z-index: 10; box-shadow: 2px 0 5px rgba(0,0,0,0.02); }
+        .sidebar-header { padding: 25px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+        .sidebar-header img { width: 45px; height: 45px; border-radius: 10px; object-fit: cover; }
+        .sidebar-header h2 { font-size: 20px; color: var(--blue); font-weight: 700; letter-spacing: -0.5px; }
+        
+        .nav-links { flex: 1; padding: 20px 15px; list-style: none; overflow-y: auto; }
+        .nav-links li a { display: flex; align-items: center; padding: 12px 15px; color: var(--muted); text-decoration: none; border-radius: 10px; cursor: pointer; font-size: 14px; font-weight: 500; margin-bottom: 5px; transition: 0.3s; }
+        .nav-links li a i { width: 28px; font-size: 16px; transition: 0.3s; }
+        .nav-links li a:hover { background: var(--bg); color: var(--text); }
+        .nav-links li a.active { background: var(--blue-light); color: var(--blue); font-weight: 600; }
+        .nav-links li a.active i { color: var(--blue); }
+        
+        .sidebar-footer { padding: 20px; border-top: 1px solid var(--border); }
+        .logout-btn { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--red); cursor: pointer; font-weight: 600; font-size: 14px; border: none; background: var(--red-light); padding: 12px; border-radius: 10px; width: 100%; transition: 0.2s; }
+        .logout-btn:hover { background: var(--red); color: white; }
+
+        /* MAIN CONTENT */
+        .main-content { flex: 1; padding: 35px 45px; overflow-y: auto; }
+        .page-section { display: none; animation: fadeIn 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+        .page-section.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
+
+        .page-header { display: flex; justify-content: space-between; margin-bottom: 30px; align-items: flex-end; }
+        .page-header h1 { font-size: 28px; font-weight: 700; margin-bottom: 5px; letter-spacing: -0.5px; }
+        .page-header p { font-size: 14px; color: var(--muted); }
+        
+        .btn { padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; color: white; display: inline-flex; align-items: center; gap: 8px; font-size: 14px; transition: 0.2s; }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        .btn-primary { background: var(--blue); } .btn-success { background: var(--green); } .btn-danger { background: var(--red); } .btn-warning { background: var(--orange); }
+        .btn-sm { padding: 8px 12px; font-size: 12px; border-radius: 6px; }
+
+
+        /* DASHBOARD NÂNG CẤP */
+        .dashboard-layout { display: grid; grid-template-columns: 1.4fr 1fr; gap: 24px; align-items: start; }
+        .dashboard-panel { background: white; border: 1px solid var(--border); border-radius: 16px; padding: 22px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02); }
+        .dashboard-panel h3 { font-size: 17px; margin-bottom: 14px; display:flex; align-items:center; gap:10px; }
+        .mini-list { display: flex; flex-direction: column; gap: 10px; }
+        .mini-item { display:flex; justify-content:space-between; gap:12px; padding:12px; border:1px solid var(--border); border-radius:12px; background:#f8fafc; }
+        .mini-item strong { font-size:14px; }
+        .mini-item span { font-size:12px; color:var(--muted); }
+        .quick-actions { display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:12px; margin-bottom: 24px; }
+        .quick-action { background:white; border:1px solid var(--border); border-radius:14px; padding:16px; cursor:pointer; transition:.2s; display:flex; align-items:center; gap:12px; font-weight:700; color:var(--text); }
+        .quick-action:hover { transform: translateY(-2px); border-color:var(--blue); color:var(--blue); box-shadow:0 8px 14px rgba(37,99,235,.08); }
+        .progress-wrap { height: 10px; background: #e2e8f0; border-radius: 999px; overflow:hidden; margin-top: 8px; }
+        .progress-bar { height:100%; background: linear-gradient(90deg, var(--blue), var(--green)); border-radius:999px; }
+        .dashboard-note { padding:14px; border-radius:12px; background:var(--blue-light); color:#1d4ed8; font-size:13px; line-height:1.5; margin-top:14px; }
+        @media (max-width: 1100px) { .dashboard-layout { grid-template-columns:1fr; } }
+
+        /* TABLES & CARDS */
+        .card { background: white; border-radius: 16px; padding: 25px; border: 1px solid var(--border); margin-bottom: 25px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02); }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 24px; margin-bottom: 30px; }
+        .stat-card { background: white; padding: 24px; border-radius: 16px; border: 1px solid var(--border); display: flex; align-items: center; gap: 18px; transition: 0.3s; }
+        .stat-card:hover { border-color: var(--blue-light); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05); transform: translateY(-3px); }
+        .stat-icon { width: 56px; height: 56px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 24px; color: white; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        
+        table { width: 100%; border-collapse: collapse; text-align: left; }
+        th { background: #f8fafc; color: var(--muted); font-size: 12px; text-transform: uppercase; padding: 16px; border-bottom: 1px solid var(--border); font-weight: 600; letter-spacing: 0.5px; }
+        td { padding: 16px; border-bottom: 1px solid var(--border); font-size: 14px; vertical-align: middle; }
+        tr:hover td { background: var(--blue-light); }
+        .action-group { display: flex; gap: 8px; }
+
+        .status-badge { padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+        .status-pending { background: var(--orange-light); color: #b45309; }
+        .status-done { background: var(--green-light); color: #047857; }
+        .status-rejected { background: var(--red-light); color: #b91c1c; }
+
+        /* POS */
+        .pos-grid { display: flex; gap: 24px; height: calc(100vh - 160px); }
+        .pos-items { flex: 2; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; align-content: start; overflow-y: auto; padding-right: 10px; }
+        .pos-item-card { border: 1px solid var(--border); padding: 20px; border-radius: 12px; cursor: pointer; background: white; transition: 0.2s; position: relative; overflow: hidden; padding-top: 132px; }
+        .pos-item-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 110px; background-size: cover; background-position: center; }
+        .pos-item-card:nth-child(1)::before { background-image: url('https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?auto=format&fit=crop&w=1200&q=80'); }
+        .pos-item-card:nth-child(2)::before { background-image: url('https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&w=1200&q=80'); }
+        .pos-item-card:nth-child(3)::before { background-image: url('https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&w=1200&q=80'); }
+        .pos-item-card:nth-child(4)::before { background-image: url('https://images.unsplash.com/photo-1503736334956-4c8f8e92946d?auto=format&fit=crop&w=1200&q=80'); }
+        .pos-item-card:nth-child(5)::before { background-image: url('https://images.unsplash.com/photo-1511919884226-fd3cad34687c?auto=format&fit=crop&w=1200&q=80'); }
+        .pos-item-card:hover { border-color: var(--blue); transform: translateY(-4px); box-shadow: 0 10px 15px -3px rgba(37,99,235,0.1); }
+        .pos-cart { flex: 1; background: white; padding: 25px; border-radius: 16px; border: 1px solid var(--border); display: flex; flex-direction: column; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02); }
+        
+        /* MODAL */
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15, 23, 42, 0.6); z-index: 1000; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
+        .modal-overlay.active { display: flex; animation: fadeIn 0.2s; }
+        .modal-box { background: white; width: 480px; padding: 30px; border-radius: 20px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); }
+        .form-group { margin-bottom: 18px; }
+        .form-group label { display: block; font-size: 13px; margin-bottom: 8px; font-weight: 600; color: var(--muted); }
+        .form-group input, .form-group select { width: 100%; padding: 12px 15px; border: 1px solid var(--border); border-radius: 10px; outline: none; font-size: 14px; transition: 0.2s; }
+        .form-group input:focus, .form-group select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-light); }
+    </style>
+</head>
+<body>
+
+    <div id="app-container" style="display: flex; width: 100%; height: 100%;">
+        <!-- SIDEBAR -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <img src="/img/tt1.jpg" onerror="this.src='https://ui-avatars.com/api/?name=KK&background=2563eb&color=fff'" alt="Logo">
+                <h2>TH2K</h2>
+            </div>
+            <ul class="nav-links">
+                <li><a onclick="switchTab('dashboard')" class="nav-item active" data-tab="dashboard"><i class="fa-solid fa-house"></i> Tổng quan</a></li>
+                <li><a onclick="switchTab('booking')" class="nav-item" data-tab="booking"><i class="fa-solid fa-calendar-check"></i> Lịch hẹn <span id="nav-badge-booking" style="margin-left:auto; background:var(--red); color:white; padding:2px 6px; border-radius:10px; font-size:11px;">0</span></a></li>
+                <li><a onclick="switchTab('order')" class="nav-item" data-tab="order"><i class="fa-solid fa-file-invoice-dollar"></i> Hóa đơn</a></li>
+                <li><a onclick="switchTab('pos')" class="nav-item" data-tab="pos"><i class="fa-solid fa-cart-shopping"></i> Thanh toán tại quầy</a></li>
+                <li style="margin: 15px 0; border-bottom: 1px solid var(--border);"></li>
+                <li><a onclick="switchTab('customer')" class="nav-item" data-tab="customer"><i class="fa-solid fa-users"></i> Khách hàng</a></li>
+                <li><a onclick="switchTab('car')" class="nav-item" data-tab="car"><i class="fa-solid fa-car-rear"></i> Quản lý xe</a></li>
+                <li><a onclick="switchTab('service')" class="nav-item" data-tab="service"><i class="fa-solid fa-wrench"></i> Dịch vụ sửa chữa</a></li>
+                <li><a onclick="switchTab('inventory')" class="nav-item" data-tab="inventory"><i class="fa-solid fa-warehouse"></i> Quản lý kho</a></li>
+                <li><a onclick="switchTab('staff')" class="nav-item" data-tab="staff"><i class="fa-solid fa-user-tie"></i> Nhân sự</a></li>
+                <li><a onclick="switchTab('warranty')" class="nav-item" data-tab="warranty"><i class="fa-solid fa-shield-halved"></i> Bảo hành</a></li>
+                <li><a onclick="switchTab('supplier')" class="nav-item" data-tab="supplier"><i class="fa-solid fa-truck-fast"></i> Nhà cung cấp</a></li>
+                <li><a onclick="switchTab('settings')" class="nav-item" data-tab="settings"><i class="fa-solid fa-gear"></i> Cài đặt</a></li>
+            </ul>
+            <div class="sidebar-footer">
+                <button class="logout-btn" onclick="logout()"><i class="fa-solid fa-arrow-right-from-bracket"></i> Đăng xuất Admin</button>
+            </div>
+        </aside>
+
+        <!-- MAIN CONTENT -->
+        <main class="main-content">
+            <!-- 1. TRANG CHỦ -->
+            <section id="dashboard" class="page-section active">
+                <div class="page-header">
+                    <div>
+                        <h1>Dashboard tổng quan Garage</h1>
+                        <p>Theo dõi nhanh doanh thu, đơn hàng, lịch hẹn, tồn kho và các thanh toán QR cần xác nhận</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="renderApp()"><i class="fa-solid fa-rotate"></i> Làm mới số liệu</button>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card" onclick="switchTab('order')" style="cursor:pointer;">
+                        <div class="stat-icon" style="background: linear-gradient(135deg, var(--green), #059669);"><i class="fa-solid fa-sack-dollar"></i></div>
+                        <div><h3 id="dash-rev" style="font-size:24px;">0đ</h3><p style="font-size: 13px; color:var(--muted);">Doanh thu đã xác nhận</p></div>
+                    </div>
+                    <div class="stat-card" onclick="switchTab('order')" style="cursor:pointer;">
+                        <div class="stat-icon" style="background: linear-gradient(135deg, var(--orange), #d97706);"><i class="fa-solid fa-qrcode"></i></div>
+                        <div><h3 id="dash-pending-qr" style="font-size:24px;">0</h3><p style="font-size: 13px; color:var(--muted);">QR chờ xác nhận</p></div>
+                    </div>
+                    <div class="stat-card" onclick="switchTab('booking')" style="cursor:pointer;">
+                        <div class="stat-icon" style="background: linear-gradient(135deg, #8b5cf6, #6d28d9);"><i class="fa-solid fa-calendar-check"></i></div>
+                        <div><h3 id="dash-booking" style="font-size:24px;">0</h3><p style="font-size: 13px; color:var(--muted);">Lịch hẹn đang chờ</p></div>
+                    </div>
+                    <div class="stat-card" onclick="switchTab('customer')" style="cursor:pointer;">
+                        <div class="stat-icon" style="background: linear-gradient(135deg, var(--blue), #1d4ed8);"><i class="fa-solid fa-users"></i></div>
+                        <div><h3 id="dash-cus" style="font-size:24px;">0</h3><p style="font-size: 13px; color:var(--muted);">Khách hàng</p></div>
+                    </div>
+                    <div class="stat-card" onclick="switchTab('order')" style="cursor:pointer;">
+                        <div class="stat-icon" style="background: linear-gradient(135deg, #0ea5e9, #0369a1);"><i class="fa-solid fa-file-invoice-dollar"></i></div>
+                        <div><h3 id="dash-order" style="font-size:24px;">0</h3><p style="font-size: 13px; color:var(--muted);">Tổng đơn hàng</p></div>
+                    </div>
+                    <div class="stat-card" onclick="switchTab('service')" style="cursor:pointer;">
+                        <div class="stat-icon" style="background: linear-gradient(135deg, #14b8a6, #0f766e);"><i class="fa-solid fa-wrench"></i></div>
+                        <div><h3 id="dash-service" style="font-size:24px;">0</h3><p style="font-size: 13px; color:var(--muted);">Dịch vụ sửa chữa</p></div>
+                    </div>
+                    <div class="stat-card" onclick="switchTab('inventory')" style="cursor:pointer;">
+                        <div class="stat-icon" style="background: linear-gradient(135deg, var(--red), #b91c1c);"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                        <div><h3 id="dash-low-stock" style="font-size:24px;">0</h3><p style="font-size: 13px; color:var(--muted);">Phụ tùng sắp hết</p></div>
+                    </div>
+                    <div class="stat-card" onclick="switchTab('staff')" style="cursor:pointer;">
+                        <div class="stat-icon" style="background: linear-gradient(135deg, #64748b, #334155);"><i class="fa-solid fa-user-tie"></i></div>
+                        <div><h3 id="dash-staff" style="font-size:24px;">0</h3><p style="font-size: 13px; color:var(--muted);">Nhân viên</p></div>
+                    </div>
+                </div>
+
+                <div class="quick-actions">
+                    <div class="quick-action" onclick="switchTab('booking')"><i class="fa-solid fa-calendar-plus"></i> Xử lý lịch hẹn</div>
+                    <div class="quick-action" onclick="switchTab('order')"><i class="fa-solid fa-qrcode"></i> Xác nhận QR</div>
+                    <div class="quick-action" onclick="switchTab('pos')"><i class="fa-solid fa-cart-shopping"></i> Thanh toán tại quầy</div>
+                    <div class="quick-action" onclick="switchTab('inventory')"><i class="fa-solid fa-warehouse"></i> Kiểm tra kho</div>
+                </div>
+
+                <div class="dashboard-layout">
+                    <div>
+                        <div class="dashboard-panel">
+                            <h3><i class="fa-solid fa-qrcode" style="color:var(--orange);"></i> Thanh toán QR đang chờ xác nhận</h3>
+                            <div id="dash-pending-list" class="mini-list"></div>
+                            <div class="dashboard-note">Chỉ khi Admin/Nhân viên bấm xác nhận thì đơn hàng mới chuyển sang hoàn tất và doanh thu mới được cộng vào dashboard.</div>
+                        </div>
+                        <div class="dashboard-panel" style="margin-top:24px;">
+                            <h3><i class="fa-solid fa-chart-simple" style="color:var(--blue);"></i> Tỷ lệ đơn đã hoàn tất</h3>
+                            <div style="display:flex; justify-content:space-between; font-size:14px;"><span>Đơn hoàn tất</span><strong id="dash-complete-rate">0%</strong></div>
+                            <div class="progress-wrap"><div id="dash-complete-bar" class="progress-bar" style="width:0%"></div></div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="dashboard-panel">
+                            <h3><i class="fa-solid fa-calendar-day" style="color:#8b5cf6;"></i> Lịch hẹn cần xử lý</h3>
+                            <div id="dash-booking-list" class="mini-list"></div>
+                        </div>
+                        <div class="dashboard-panel" style="margin-top:24px;">
+                            <h3><i class="fa-solid fa-box-open" style="color:var(--red);"></i> Phụ tùng sắp hết hàng</h3>
+                            <div id="dash-stock-list" class="mini-list"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- CÁC SECTION QUẢN LÝ -->
+            <section id="booking" class="page-section"><div class="page-header"><div><h1>Quản lý Lịch Hẹn</h1></div><button class="btn btn-primary" onclick="openModal('booking')"><i class="fa-solid fa-plus"></i> Tạo thủ công</button></div><div class="card" style="padding:0;"><table id="tbl-booking"></table></div></section>
+            <section id="order" class="page-section"><div class="page-header"><div><h1>Hóa đơn / Lịch sử sửa chữa</h1></div><button class="btn btn-primary" onclick="openModal('order')"><i class="fa-solid fa-plus"></i> Thêm thủ công</button></div><div class="card" style="padding:0;"><table id="tbl-order"></table></div></section>
+            <section id="staff" class="page-section"><div class="page-header"><div><h1>Quản lý Nhân sự</h1></div><button class="btn btn-primary" onclick="openModal('staff')"><i class="fa-solid fa-plus"></i> Thêm nhân viên</button></div><div class="card" style="padding:0;"><table id="tbl-staff"></table></div></section>
+            <section id="customer" class="page-section"><div class="page-header"><div><h1>Khách hàng</h1></div><button class="btn btn-primary" onclick="openModal('customer')"><i class="fa-solid fa-plus"></i> Thêm mới</button></div><div class="card" style="padding:0;"><table id="tbl-customer"></table></div></section>
+            <section id="car" class="page-section"><div class="page-header"><div><h1>Quản lý xe</h1><p>Danh sách xe của khách hàng trong garage</p></div><button class="btn btn-primary" onclick="openModal('car')"><i class="fa-solid fa-plus"></i> Thêm xe</button></div><div class="card" style="padding:0;"><table id="tbl-car"></table></div></section>
+            <section id="service" class="page-section"><div class="page-header"><div><h1>Dịch vụ sửa chữa</h1></div><button class="btn btn-primary" onclick="openModal('service')"><i class="fa-solid fa-plus"></i> Thêm mới</button></div><div class="card" style="padding:0;"><table id="tbl-service"></table></div></section>
+            <section id="inventory" class="page-section"><div class="page-header"><div><h1>Kho phụ tùng</h1></div><button class="btn btn-primary" onclick="openModal('inventory')"><i class="fa-solid fa-plus"></i> Nhập kho</button></div><div class="card" style="padding:0;"><table id="tbl-inventory"></table></div></section>
+            <section id="warranty" class="page-section"><div class="page-header"><div><h1>Bảo hành</h1></div><button class="btn btn-primary" onclick="openModal('warranty')"><i class="fa-solid fa-plus"></i> Cấp bảo hành</button></div><div class="card" style="padding:0;"><table id="tbl-warranty"></table></div></section>
+            <section id="supplier" class="page-section"><div class="page-header"><div><h1>Nhà cung cấp</h1></div><button class="btn btn-primary" onclick="openModal('supplier')"><i class="fa-solid fa-plus"></i> Thêm mới</button></div><div class="card" style="padding:0;"><table id="tbl-supplier"></table></div></section>
+
+            <!-- THANH TOÁN TẠI QUẦY -->
+            <section id="pos" class="page-section">
+                <div class="page-header"><div><h1>Thanh toán tại quầy</h1></div></div>
+                <div class="pos-grid">
+                    <div class="pos-items" id="pos-items"></div>
+                    <div class="pos-cart">
+                        <h3 style="color:var(--text); margin-bottom: 15px; display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-receipt" style="color:var(--blue);"></i> Dịch vụ thanh toán</h3>
+                        <input type="text" id="pos-cus-name" placeholder="Tên / SĐT khách hàng..." style="padding:12px; width:100%; border:1px solid var(--border); border-radius:8px; margin-bottom:15px; outline:none;">
+                        <div class="cart-list" id="cart-list" style="flex: 1; overflow-y:auto; margin-bottom: 15px;"></div>
+                        <div style="display: flex; justify-content: space-between; font-size: 20px; font-weight: 700; margin-bottom: 20px; padding-top: 15px; border-top: 2px dashed var(--border);">
+                            <span>Thành tiền:</span><span id="cart-total" style="color:var(--primary);">0đ</span>
+                        </div>
+                        <button class="btn btn-success" style="width: 100%; justify-content: center; padding: 16px; font-size: 16px;" onclick="checkout()">Tạo Đơn & Thanh Toán</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- CÀI ĐẶT -->
+            <section id="settings" class="page-section">
+                <div class="page-header"><div><h1>Cài Đặt Hệ Thống</h1></div></div>
+                <div class="card">
+                    <h3 style="color: var(--red);">Danger Zone (Khu vực nguy hiểm)</h3>
+                    <p style="color: var(--muted); margin: 10px 0 20px;">Hành động này sẽ xóa toàn bộ dữ liệu Thêm/Sửa/Xóa của cả Admin và Khách hàng.</p>
+                    <button class="btn btn-danger" onclick="resetSystem()"><i class="fa-solid fa-triangle-exclamation"></i> Khôi phục dữ liệu gốc</button>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- MODAL ĐỘNG -->
+    <div class="modal-overlay" id="mainModal">
+        <div class="modal-box">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; border-bottom: 1px solid var(--border); padding-bottom: 15px;">
+                <h3 id="modal-title" style="font-size: 20px; font-weight: 700;">Form</h3>
+                <i class="fa-solid fa-xmark" style="cursor: pointer; font-size: 20px; color: var(--muted);" onclick="closeModal()"></i>
+            </div>
+            <input type="hidden" id="entityType"><input type="hidden" id="entityId">
+            <div id="modal-fields"></div>
+            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 30px;">
+                <button class="btn" style="background: var(--bg); color: var(--text); border: 1px solid var(--border);" onclick="closeModal()">Hủy bỏ</button>
+                <button class="btn btn-primary" onclick="saveData()"><i class="fa-solid fa-floppy-disk"></i> Lưu Dữ Liệu</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const schema = {
+            staff: { title: 'Nhân sự', cols: ['Họ Tên', 'Chức vụ', 'SĐT', 'Lương'], fields: ['f1', 'f2', 'f3', 'f4'] },
+            customer: { title: 'Khách hàng', cols: ['Tên KH', 'SĐT', 'Biển số', 'Loại xe'], fields: ['f1', 'f2', 'f3', 'f4'] },
+            car: { title: 'Xe', cols: ['Biển số', 'Khách hàng', 'Hãng xe', 'Trạng thái'], fields: ['f1', 'f2', 'f3', 'status'] },
+            service: { title: 'Dịch vụ sửa chữa', cols: ['Tên dịch vụ', 'Mã DV', 'Đơn giá', 'Ghi chú'], fields: ['f1', 'f2', 'f3', 'f4'] },
+            inventory: { title: 'Kho', cols: ['Tên Phụ Tùng', 'Mã SP', 'Tồn kho', 'Vị trí'], fields: ['f1', 'f2', 'f3', 'f4'] },
+            warranty: { title: 'Bảo hành', cols: ['Dịch vụ', 'Khách hàng', 'Ngày mua', 'Hạn BH'], fields: ['f1', 'f2', 'f3', 'f4'] },
+            supplier: { title: 'Nhà cung cấp', cols: ['Tên NCC', 'SĐT', 'Địa chỉ', 'Trạng thái'], fields: ['f1', 'f2', 'f3', 'f4'] },
+            order: { title: 'Hóa đơn', cols: ['Dịch vụ', 'Khách hàng', 'SĐT/Tài khoản', 'Tổng tiền', 'Trạng thái'], fields: ['f1', 'f2', 'customerAccount', 'f3', 'status'] },
+            booking: { title: 'Lịch hẹn', cols: ['Khách đặt', 'Dịch vụ', 'Ngày giờ', 'Trạng thái', 'Lý do từ chối'], fields: ['customerName', 'type', 'date', 'status', 'rejectionReason'] }
+        };
+
+        const defaultData = {
+            staff: [{ id: 1, f1: "Nguyễn Văn A", f2: "Quản lý Gara", f3: "0912345678", f4: "15,000,000" }],
+            customer: [{ id: 1, f1: "Trần Thị Lan", f2: "0988776655", f3: "30A-123.45", f4: "Toyota Vios" }],
+            car: [
+                { id: 1, f1: "30A-123.45", f2: "Trần Thị Lan", f3: "Toyota Vios 2021", status: "Đang hoạt động" },
+                { id: 2, f1: "14A-678.90", f2: "Nguyễn Văn Minh", f3: "Honda City 2022", status: "Đang sửa chữa" }
+            ],
+            service: [
+                { id: 'DV001', f1: 'Thay dầu máy', f2: 'DV001', f3: '350000', f4: 'Dịch vụ phổ biến' },
+                { id: 'DV002', f1: 'Rửa xe cao cấp', f2: 'DV002', f3: '120000', f4: 'Vệ sinh ngoại thất' },
+                { id: 'DV003', f1: 'Kiểm tra phanh', f2: 'DV003', f3: '150000', f4: 'Kiểm tra an toàn' },
+                { id: 'DV004', f1: 'Bảo dưỡng định kỳ', f2: 'DV004', f3: '800000', f4: 'Kiểm tra tổng quát' },
+                { id: 'DV005', f1: 'Phủ Ceramic cao cấp', f2: 'DV005', f3: '5000000', f4: 'Chăm sóc sơn xe' },
+                { id: 'DV006', f1: 'Vệ sinh nội thất', f2: 'DV006', f3: '500000', f4: 'Làm sạch khoang xe' },
+                { id: 'DV007', f1: 'Cân bằng lốp', f2: 'DV007', f3: '250000', f4: 'Ổn định vận hành' }
+            ],
+            inventory: [
+                { id: 'PT001', f1: 'Lọc dầu', f2: 'PT001', f3: '20', f4: 'Kệ A1' },
+                { id: 'PT002', f1: 'Má phanh trước', f2: 'PT002', f3: '10', f4: 'Kệ B2' },
+                { id: 'PT003', f1: 'Bugi', f2: 'PT003', f3: '40', f4: 'Kệ C1' },
+                { id: 'PT004', f1: 'Ắc quy GS', f2: 'PT004', f3: '5', f4: 'Kệ D1' },
+                { id: 'PT005', f1: 'Lốp Michelin', f2: 'PT005', f3: '12', f4: 'Kệ Lốp' },
+                { id: 'PT006', f1: 'Nước làm mát', f2: 'PT006', f3: '25', f4: 'Kệ A2' },
+                { id: 'PT007', f1: 'Gạt mưa', f2: 'PT007', f3: '15', f4: 'Kệ C3' }
+            ],
+            warranty: [{ id: 1, f1: "Bình Ắc quy GS", f2: "Trần Thị Lan", f3: "10/01/2026", f4: "10/01/2027" }],
+            supplier: [{ id: 1, f1: "Công ty Phụ tùng 365", f2: "0900111222", f3: "Hà Nội", f4: "Hoạt động" }],
+            order: [], booking: [], revenue: 0
+        };
+
+        let db = {};
+
+        function saveDB() {
+            for(let key in schema) { localStorage.setItem('db_' + key, JSON.stringify(db[key])); }
+            localStorage.setItem('db_revenue', db.revenue);
+        }
+
+        // ĐỒNG BỘ SIÊU CẤP: TUYỆT ĐỐI KHÔNG LÀM MẤT DỮ LIỆU
+        async function initData() {
+            // Bước 1: Tải toàn bộ dữ liệu có sẵn từ LocalStorage (bao gồm những gì đã lưu trước đó)
+            for(let key in schema) {
+                let localData = JSON.parse(localStorage.getItem('db_' + key));
+                db[key] = (localData && localData.length > 0) ? localData : [...defaultData[key]];
+            }
+            db.revenue = Number(localStorage.getItem('db_revenue')) || 0;
+
+            // Bước 2: Quét những khách hàng mới đăng ký nhưng chưa kịp vào bảng Khách Hàng
+            let accounts = JSON.parse(localStorage.getItem('db_accounts')) || [];
+            accounts.forEach(acc => {
+                // Nếu là khách hàng và SĐT/Email chưa tồn tại trong bảng db.customer
+                if (acc.role === 'customer' && !db.customer.find(c => c.f2 === acc.user)) {
+                    db.customer.unshift({ 
+                        id: 'KH_ONL_' + Date.now(), 
+                        f1: acc.name || "Khách mới", 
+                        f2: acc.user, 
+                        f3: "Chưa cập nhật", 
+                        f4: "Đăng ký từ Web" 
+                    });
+                }
+            });
+
+            // Bước 3: Merge với API C# (chỉ bổ sung người chưa có mặt, không xóa ai cả)
+            try {
+                const resCus = await fetch('/api/Customers');
+                if(resCus.ok) {
+                    const jsonCus = await resCus.json();
+                    let realCus = Array.isArray(jsonCus) ? jsonCus : (jsonCus.data || jsonCus.value || []);
+                    realCus.forEach(c => {
+                        let emailOrPhone = c.phoneNumber || c.phone || c.email || c.Email || "Chưa có";
+                        if (!db.customer.find(existing => existing.f2 === emailOrPhone)) {
+                            db.customer.unshift({ 
+                                id: c.id || c.Id, 
+                                f1: c.fullName || c.name || "Khách C#", 
+                                f2: emailOrPhone, 
+                                f3: c.licensePlate || "Chưa cập nhật", 
+                                f4: "Từ Database C#" 
+                            });
+                        }
+                    });
+                }
+            } catch(e) { console.log("Bỏ qua đồng bộ API C# Customers vì server không phản hồi."); }
+
+            try {
+                const resCar = await fetch('/api/Cars');
+                if(resCar.ok) {
+                    const jsonCars = await resCar.json();
+                    let realCars = Array.isArray(jsonCars) ? jsonCars : (jsonCars.data || jsonCars.value || []);
+                    realCars.forEach(c => {
+                        let code = c.code || c.Code || "Mã SP";
+                        if (!db.service.find(existing => existing.f2 === code)) {
+                            db.service.unshift({ 
+                                id: c.id || c.Id, 
+                                f1: c.name || c.Name, 
+                                f2: code, 
+                                f3: c.price || c.Price || 0, 
+                                f4: "Còn hàng" 
+                            });
+                        }
+                    });
+                }
+            } catch(e) { console.log("Bỏ qua đồng bộ API C# Cars."); }
+
+            // LƯU LẠI TOÀN BỘ SỰ KẾT HỢP NÀY VÀ VẼ LÊN GIAO DIỆN
+            saveDB();
+            renderApp();
+        }
+
+        function formatMoney(num) { return isNaN(num) ? num : Number(num).toLocaleString('vi-VN') + 'đ'; }
+        function normalizeUserKey(value) {
+            return String(value || '').trim().toLowerCase().replace(/[^a-z0-9@._-]/g, '_');
+        }
+        function findCustomerByNameOrAccount(value) {
+            const v = String(value || '').trim().toLowerCase();
+            if(!v) return null;
+            return (db.customer || []).find(c =>
+                String(c.f1 || '').trim().toLowerCase() === v ||
+                String(c.f2 || '').trim().toLowerCase() === v ||
+                String(c.customerAccount || '').trim().toLowerCase() === v
+            ) || null;
+        }
+
+        function onlyNumber(value) {
+            const n = Number(String(value || '').replace(/[^0-9.-]/g, ''));
+            return isNaN(n) ? 0 : n;
+        }
+        function isPendingStatus(status) { return String(status || '').toLowerCase().includes('chờ'); }
+        function isPaidStatus(status) {
+            const st = String(status || '').toLowerCase();
+            return (st.includes('đã') || st.includes('hoàn tất')) && !st.includes('chờ');
+        }
+        function isLowStock(value) {
+            const raw = String(value || '').trim().toLowerCase();
+            if(raw.includes('không') || raw.includes('còn hàng')) return false;
+            const n = onlyNumber(raw);
+            return n > 0 && n <= 3;
+        }
+        function setText(id, value) { const el = document.getElementById(id); if(el) el.innerText = value; }
+        function setHTML(id, value) { const el = document.getElementById(id); if(el) el.innerHTML = value; }
+
+        function renderDashboard() {
+            const orders = db.order || [];
+            const bookings = db.booking || [];
+            const inventory = db.inventory || [];
+            const services = db.service || [];
+            const staff = db.staff || [];
+
+            let calculatedRev = orders.reduce((sum, o) => isPaidStatus(o.status) ? sum + (Number(o.f3) || 0) : sum, 0);
+            db.revenue = calculatedRev;
+            localStorage.setItem('db_revenue', calculatedRev);
+
+            const pendingQrOrders = orders.filter(o => String(o.status || '').includes('QR') || String(o.paymentStatus || '').includes('QR') || (isPendingStatus(o.status) && String(o.status || '').includes('thanh toán')));
+            const pendingBookings = bookings.filter(b => isPendingStatus(b.status));
+            const lowStocks = inventory.filter(i => isLowStock(i.f3));
+            const completedOrders = orders.filter(o => isPaidStatus(o.status)).length;
+            const completeRate = orders.length ? Math.round(completedOrders / orders.length * 100) : 0;
+
+            setText('dash-cus', db.customer.length);
+            setText('dash-order', orders.length);
+            setText('dash-rev', formatMoney(calculatedRev));
+            setText('dash-pending-qr', pendingQrOrders.length);
+            setText('dash-booking', pendingBookings.length);
+            setText('dash-service', services.length);
+            setText('dash-low-stock', lowStocks.length);
+            setText('dash-staff', staff.length);
+            setText('dash-complete-rate', completeRate + '%');
+            const bar = document.getElementById('dash-complete-bar'); if(bar) bar.style.width = completeRate + '%';
+            setText('nav-badge-booking', pendingBookings.length);
+
+            setHTML('dash-pending-list', pendingQrOrders.slice(0, 5).map(o => `
+                <div class="mini-item">
+                    <div><strong>${o.f2 || 'Khách hàng'}</strong><br><span>${o.f1 || 'Hóa đơn'} • ${o.id || ''}</span></div>
+                    <div style="text-align:right"><strong style="color:var(--orange);">${formatMoney(o.f3)}</strong><br><button class="btn btn-success btn-sm" onclick="approveItem('order','${o.id}')"><i class="fa-solid fa-check"></i> Xác nhận</button></div>
+                </div>`).join('') || '<p style="color:var(--muted); font-size:14px;">Không có thanh toán QR nào đang chờ.</p>');
+
+            setHTML('dash-booking-list', pendingBookings.slice(0, 5).map(b => `
+                <div class="mini-item">
+                    <div><strong>${b.customerName || b.f1 || 'Khách hàng'}</strong><br><span>${b.type || b.f2 || 'Dịch vụ'} • ${b.date || b.f3 || ''}</span></div>
+                    <div style="display:flex; gap:8px;">
+                        <button class="btn btn-success btn-sm" title="Xác nhận lịch" onclick="approveItem('booking','${b.id}')"><i class="fa-solid fa-check"></i></button>
+                        <button class="btn btn-danger btn-sm" title="Từ chối lịch" onclick="rejectBooking('${b.id}')"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
+                </div>`).join('') || '<p style="color:var(--muted); font-size:14px;">Không có lịch hẹn đang chờ.</p>');
+
+            setHTML('dash-stock-list', lowStocks.slice(0, 5).map(i => `
+                <div class="mini-item">
+                    <div><strong>${i.f1}</strong><br><span>Mã: ${i.f2 || '---'} • Vị trí: ${i.f4 || '---'}</span></div>
+                    <strong style="color:var(--red);">Còn ${i.f3}</strong>
+                </div>`).join('') || '<p style="color:var(--muted); font-size:14px;">Kho chưa có phụ tùng sắp hết.</p>');
+        }
+
+        function renderApp() {
+            renderDashboard();
+
+            for(let type in schema) {
+                let table = document.getElementById('tbl-' + type);
+                if(!table) continue;
+                
+                let sc = schema[type];
+                let thead = `<thead><tr>` + sc.cols.map(c => `<th>${c}</th>`).join('') + `<th style="text-align:right;">Thao tác</th></tr></thead>`;
+                
+                let dataToRender = [...db[type]];
+
+                let tbody = `<tbody>` + dataToRender.map(row => {
+                    let tdHtml = '';
+                    sc.fields.forEach((fieldKey, idx) => {
+                        let val = row[fieldKey] || '';
+                        if(idx === 0) {
+                            tdHtml += `<td><strong>${val}</strong></td>`;
+                        } else if (fieldKey === 'f3' && (type === 'service' || type === 'order')) {
+                            tdHtml += `<td style="color:var(--blue); font-weight:700;">${formatMoney(val)}</td>`;
+                        } else if (fieldKey === 'status') {
+                            let badgeClass = (val.includes('Từ chối') || val.includes('từ chối')) ? 'status-rejected' : (val.includes('Chờ') || val.includes('Pending')) ? 'status-pending' : (val.includes('hủy') || val.includes('Hủy')) ? 'status-rejected' : 'status-done';
+                            tdHtml += `<td><span class="status-badge ${badgeClass}">${val}</span></td>`;
+                        } else {
+                            tdHtml += `<td>${val}</td>`;
+                        }
+                    });
+
+                    let approveBtn = '';
+                    let rejectBtn = '';
+                    if((type === 'booking' || type === 'order') && (row.status || '').includes('Chờ')) {
+                        approveBtn = `<button class="btn btn-success btn-sm" title="Xác nhận" onclick="approveItem('${type}', '${row.id}')"><i class="fa-solid fa-check"></i></button>`;
+                    }
+                    if(type === 'booking' && (row.status || '').includes('Chờ')) {
+                        rejectBtn = `<button class="btn btn-danger btn-sm" title="Từ chối lịch hẹn" onclick="rejectBooking('${row.id}')"><i class="fa-solid fa-xmark"></i></button>`;
+                    }
+
+                    return `
+                    <tr>
+                        ${tdHtml}
+                        <td style="text-align:right;">
+                            <div class="action-group" style="justify-content:flex-end;">
+                                ${approveBtn}
+                                ${rejectBtn}
+                                <button class="btn btn-warning btn-sm" title="Sửa" onclick="openModal('${type}', '${row.id}')"><i class="fa-solid fa-pen"></i></button>
+                                <button class="btn btn-danger btn-sm" title="Xóa" onclick="deleteData('${type}', '${row.id}')"><i class="fa-solid fa-trash"></i></button>
+                            </div>
+                        </td>
+                    </tr>`;
+                }).join('') + `</tbody>`;
+                
+                table.innerHTML = thead + tbody;
+            }
+
+            document.getElementById('pos-items').innerHTML = db.service.map(item => `
+                <div class="pos-item-card" onclick="addToCart('${item.f1}', '${item.f3}')">
+                    <h4 style="margin-bottom:8px; font-size:15px;">${item.f1}</h4>
+                    <span style="font-size:12px; color:var(--muted); background:var(--bg); padding:3px 8px; border-radius:4px;">${item.f2}</span>
+                    <div style="color:var(--blue); font-weight:700; font-size: 16px; margin-top:12px;">${formatMoney(item.f3)}</div>
+                </div>
+            `).join('');
+        }
+
+        // MODAL
+        function openModal(type, id = null) {
+            let sc = schema[type];
+            document.getElementById('entityType').value = type;
+            document.getElementById('entityId').value = id || "";
+            document.getElementById('modal-title').innerText = (id ? "Cập nhật " : "Thêm mới ") + sc.title;
+
+            let item = id ? db[type].find(x => String(x.id) === String(id)) : {};
+            let html = '';
+            
+            sc.cols.forEach((colName, idx) => {
+                let fieldKey = sc.fields[idx];
+                let val = item[fieldKey] || '';
+                
+                if (fieldKey === 'status') {
+                    html += `
+                    <div class="form-group">
+                        <label>${colName}</label>
+                        <select id="inp-${fieldKey}">
+                            <option value="Chờ xác nhận" ${val.includes('Chờ') ? 'selected' : ''}>Chờ xác nhận</option>
+                            <option value="Chờ xác nhận thanh toán QR" ${val.includes('thanh toán QR') ? 'selected' : ''}>Chờ xác nhận thanh toán QR</option>
+                            <option value="Đã xác nhận / Hoàn tất" ${val.includes('Đã') || val.includes('Hoàn tất') ? 'selected' : ''}>Đã hoàn tất</option>
+                            <option value="Đã từ chối" ${val === 'Đã từ chối' ? 'selected' : ''}>Đã từ chối</option>
+                            <option value="Đã hủy" ${val === 'Đã hủy' ? 'selected' : ''}>Đã hủy</option>
+                        </select>
+                    </div>`;
+                } else {
+                    html += `
+                    <div class="form-group">
+                        <label>${colName}</label>
+                        <input type="text" id="inp-${fieldKey}" value="${val}" placeholder="Nhập ${colName.toLowerCase()}...">
+                    </div>`;
+                }
+            });
+
+            document.getElementById('modal-fields').innerHTML = html;
+            document.getElementById('mainModal').classList.add('active');
+        }
+
+        function closeModal() { document.getElementById('mainModal').classList.remove('active'); }
+
+        function saveData() {
+            let type = document.getElementById('entityType').value;
+            let id = document.getElementById('entityId').value;
+            let sc = schema[type];
+            
+            let firstInput = document.getElementById('inp-' + sc.fields[0]).value;
+            if(!firstInput) return alert("Vui lòng nhập thông tin cho trường đầu tiên!");
+
+            let newItem = { id: id ? id : 'ID_' + Date.now() };
+            
+            if(id) {
+                let existing = db[type].find(x => String(x.id) === String(id));
+                if(existing) newItem = {...existing}; 
+            } else {
+                if(type === 'order') newItem.f4 = new Date().toLocaleString('vi-VN');
+                if(type === 'booking') newItem.createdAt = new Date().toLocaleString('vi-VN');
+            }
+
+            sc.fields.forEach(fieldKey => {
+                newItem[fieldKey] = document.getElementById('inp-' + fieldKey).value;
+            });
+
+            if(type === 'order') {
+                const customer = findCustomerByNameOrAccount(newItem.customerAccount || newItem.f2);
+                if(customer) {
+                    newItem.f2 = customer.f1 || newItem.f2;
+                    newItem.customerAccount = customer.f2 || customer.customerAccount || newItem.customerAccount;
+                    newItem.ownerUser = normalizeUserKey(newItem.customerAccount || newItem.f2);
+                    newItem.customerName = newItem.f2;
+                } else if(newItem.customerAccount) {
+                    newItem.ownerUser = normalizeUserKey(newItem.customerAccount);
+                    newItem.customerName = newItem.f2;
+                } else {
+                    alert('Lưu ý: Hóa đơn chưa có SĐT/Tài khoản khách hàng nên khách có thể không nhìn thấy trong mục Hóa đơn của tôi.');
+                }
+            }
+
+            if(type === 'car') {
+                const customer = findCustomerByNameOrAccount(newItem.f2);
+                if(customer) {
+                    newItem.customerAccount = customer.f2 || customer.customerAccount || '';
+                    newItem.ownerUser = normalizeUserKey(newItem.customerAccount || customer.f1);
+                    newItem.customerName = customer.f1;
+                }
+            }
+
+            if(type === 'booking' && newItem.status === 'Đã từ chối' && !String(newItem.rejectionReason || '').trim()) {
+                return alert('Lịch hẹn bị từ chối cần có lý do từ chối.');
+            }
+
+            if (id) {
+                let index = db[type].findIndex(x => String(x.id) === String(id));
+                db[type][index] = newItem;
+            } else {
+                db[type].unshift(newItem); 
+            }
+
+            saveDB(); renderApp(); closeModal();
+        }
+
+        function deleteData(type, id) {
+            if (confirm("Xác nhận xóa dữ liệu này vĩnh viễn?")) {
+                db[type] = db[type].filter(x => String(x.id) !== String(id));
+                saveDB(); renderApp();
+            }
+        }
+
+        function extractMoneyFromText(text) {
+            const raw = String(text || '');
+            const matches = raw.match(/[0-9][0-9\.\,]*/g);
+            if(!matches || matches.length === 0) return 0;
+            const last = matches[matches.length - 1].replace(/[^0-9]/g, '');
+            return Number(last) || 0;
+        }
+
+        function createInvoiceFromBooking(booking) {
+            db.order = db.order || [];
+            const existed = db.order.find(o => String(o.bookingId || '') === String(booking.id));
+            if(existed) return existed;
+
+            const estimate = Number(booking.estimatedAmount || booking.f3 || 0) || extractMoneyFromText(booking.note);
+            const amount = estimate > 0 ? estimate : 0;
+            const now = new Date().toLocaleString('vi-VN');
+            const invoice = {
+                id: 'HD' + Math.floor(Math.random() * 1000000),
+                bookingId: booking.id,
+                ownerUser: booking.ownerUser || booking.customerAccount || booking.customerEmail || '',
+                customerAccount: booking.customerAccount || booking.customerEmail || booking.ownerUser || '',
+                customerName: booking.customerName || booking.f2 || 'Khách hàng',
+                f1: 'Hóa đơn tạm tính: ' + (booking.carService || booking.type || 'Dịch vụ sửa chữa'),
+                f2: booking.customerName || booking.f2 || 'Khách hàng',
+                f3: amount,
+                f4: now,
+                carService: booking.carService || '',
+                selectedTarget: booking.selectedTarget || '',
+                paymentMethod: '',
+                paymentStatus: 'Chưa thanh toán',
+                status: 'Chưa thanh toán',
+                createdFrom: 'Tạo tự động từ lịch hẹn đã xác nhận'
+            };
+            db.order.unshift(invoice);
+            return invoice;
+        }
+
+        function approveItem(type, id) {
+            let item = db[type].find(x => String(x.id) === String(id));
+            if(item) {
+                if(type === 'order') {
+                    item.status = "Đã xác nhận / Hoàn tất";
+                    item.paymentStatus = 'Đã được Admin/Nhân viên xác nhận thanh toán';
+                    item.paidAt = new Date().toLocaleString('vi-VN');
+                } else if(type === 'booking') {
+                    item.status = "Đã xác nhận / Hoàn tất";
+                    item.rejectionReason = '';
+                    item.approvedAt = new Date().toLocaleString('vi-VN');
+                    createInvoiceFromBooking(item);
+                    alert('Đã xác nhận lịch hẹn và tạo hóa đơn tạm tính cho khách hàng.');
+                } else {
+                    item.status = "Đã xác nhận / Hoàn tất";
+                }
+                saveDB(); renderApp();
+            }
+        }
+
+        function rejectBooking(id) {
+            const item = db.booking.find(x => String(x.id) === String(id));
+            if(!item) return alert('Không tìm thấy lịch hẹn cần từ chối!');
+            const reason = prompt('Nhập lý do từ chối lịch hẹn này:');
+            if(reason === null) return;
+            const cleanReason = reason.trim();
+            if(!cleanReason) return alert('Bạn phải nhập lý do từ chối để khách hàng biết nguyên nhân.');
+            item.status = 'Đã từ chối';
+            item.rejectionReason = cleanReason;
+            item.rejectedAt = new Date().toLocaleString('vi-VN');
+            saveDB();
+            renderApp();
+            alert('Đã từ chối lịch hẹn và lưu lý do cho khách hàng.');
+        }
+
+        // BÁN HÀNG POS
+        let cart = []; let totalCart = 0;
+        function addToCart(name, price) {
+            let numPrice = Number(price) || 0;
+            cart.push({ name, price: numPrice });
+            totalCart += numPrice;
+            renderCart();
+        }
+        function renderCart() {
+            let list = document.getElementById('cart-list');
+            if(cart.length === 0) { list.innerHTML = `<div style="text-align:center; color:var(--muted); padding:30px 0;">Chưa chọn dịch vụ</div>`; }
+            else {
+                list.innerHTML = cart.map((item, idx) => `
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid var(--border); padding-bottom:8px;">
+                        <span style="font-size:14px; font-weight:500;">${item.name}</span>
+                        <div><strong style="color:var(--blue);">${formatMoney(item.price)}</strong> <i class="fa-solid fa-circle-xmark" style="color:var(--red); cursor:pointer; margin-left:12px;" onclick="removeFromCart(${idx})"></i></div>
+                    </div>
+                `).join('');
+            }
+            document.getElementById('cart-total').innerText = formatMoney(totalCart);
+        }
+        function removeFromCart(idx) { totalCart -= cart[idx].price; cart.splice(idx, 1); renderCart(); }
+        
+        function checkout() {
+            if(cart.length === 0) return alert("Chưa chọn dịch vụ để thanh toán!");
+            let cusName = document.getElementById('pos-cus-name').value || "Khách lẻ";
+            let customer = findCustomerByNameOrAccount(cusName);
+            let itemNames = cart.map(c => c.name).join(', ');
+            db.order.unshift({
+                id: 'POS' + Math.floor(Math.random() * 100000),
+                f1: "Thanh toán tại quầy: " + itemNames,
+                f2: customer ? customer.f1 : cusName,
+                customerAccount: customer ? customer.f2 : cusName,
+                ownerUser: normalizeUserKey(customer ? customer.f2 : cusName),
+                customerName: customer ? customer.f1 : cusName,
+                f3: totalCart,
+                f4: new Date().toLocaleString('vi-VN'),
+                status: "Đã hoàn tất"
+            });
+            saveDB(); renderApp();
+            alert(`Thanh toán thành công!\nTổng thu: ${formatMoney(totalCart)}`);
+            cart = []; totalCart = 0; document.getElementById('pos-cus-name').value = ""; renderCart();
+            switchTab('order');
+        }
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.page-section').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+            document.getElementById(tabId).classList.add('active');
+            document.querySelector(`[data-tab="${tabId}"]`).classList.add('active');
+            renderApp(); // Cập nhật lại UI khi đổi tab
+        }
+        
+        function resetSystem() {
+            if(confirm("Khôi phục tất cả dữ liệu về mặc định? Toàn bộ danh sách Khách Hàng, Hóa đơn sẽ bị xóa!")) { 
+                localStorage.clear(); location.reload(); 
+            }
+        }
+
+        function logout() {
+            if (confirm("Đăng xuất khỏi trang Quản trị?")) {
+                fetch('/api/auth/logout', { method: 'POST' }).catch(e => {});
+                sessionStorage.clear();
+                localStorage.removeItem('KKTH_ACTIVE_USER');
+                window.location.href = 'login.html';
+            }
+        }
+
+        // Khởi động chạy hàm ĐỒNG BỘ SIÊU CẤP 1 lần duy nhất, sau đó mới vẽ UI
+        window.onload = () => {
+            initData();
+            renderCart();
+        };
+    </script>
+</body>
+</html>

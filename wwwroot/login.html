@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Đăng nhập | TH2K</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        :root {
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --success: #10b981;
+            --bg: #f8fafc;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+        body { 
+            background-color: var(--bg);
+            background-image: linear-gradient(135deg, rgba(37, 99, 235, 0.1) 0%, rgba(29, 78, 216, 0.1) 100%);
+            display: flex; justify-content: center; align-items: center; 
+            height: 100vh; overflow: hidden;
+        }
+        .auth-card { 
+            background: white; width: 100%; max-width: 420px; 
+            border-radius: 20px; overflow: hidden; 
+            box-shadow: 0 20px 40px rgba(0,0,0,0.08); 
+            border: 1px solid #e2e8f0;
+        }
+        .auth-header { 
+            background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); 
+            color: white; text-align: center; padding: 40px 20px 30px; 
+        }
+        .auth-header img { 
+            width: 80px; height: 80px; border-radius: 50%; 
+            border: 4px solid white; background: white; margin-bottom: 15px;
+            object-fit: cover; box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+        .auth-header h2 { font-size: 24px; font-weight: 700; }
+        .auth-header p { font-size: 14px; opacity: 0.9; margin-top: 5px; }
+        .auth-body { padding: 40px; }
+        .auth-body h3 { margin-bottom: 25px; font-size: 22px; color: #1e293b; text-align: center; font-weight: 700;}
+        .form-group { margin-bottom: 20px; position: relative; }
+        .form-group i { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: #64748b; }
+        .password-group input { padding-right: 55px; }
+        .toggle-password {
+            position: absolute;
+            right: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            border: none;
+            background: transparent;
+            color: #64748b;
+            cursor: pointer;
+            font-size: 17px;
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 5;
+        }
+        .toggle-password:hover { color: var(--primary); }
+        .toggle-password span { position: static; transform: none; color: inherit; font-size: 20px; line-height: 1; }
+        input { 
+            width: 100%; padding: 14px 15px 14px 45px; 
+            border: 1px solid #cbd5e1; border-radius: 12px; 
+            outline: none; font-size: 15px; background: #f8fafc; transition: 0.3s;
+        }
+        input:focus { border-color: var(--primary); box-shadow: 0 0 0 4px rgba(37,99,235,0.15); background: white;}
+        .btn { 
+            width: 100%; padding: 15px; border: none; border-radius: 12px; 
+            cursor: pointer; font-weight: 700; color: white; 
+            background: var(--primary); font-size: 16px; transition: 0.3s;
+        }
+        .btn:hover { background: var(--primary-hover); transform: translateY(-2px); box-shadow: 0 4px 12px rgba(37,99,235,0.2); }
+        .btn-reg { background: var(--success); }
+        .btn-reg:hover { background: #059669; }
+        .auth-footer { text-align: center; margin-top: 25px; font-size: 14px; color: #64748b; }
+        .auth-footer span { color: var(--primary); cursor: pointer; font-weight: 600;}
+        .auth-footer span:hover { text-decoration: underline; }
+        #loginBox, #regBox { animation: fadeIn 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+
+    <div class="auth-card">
+        <div class="auth-header">
+            <img src="/img/tt1.jpg" onerror="this.src='https://ui-avatars.com/api/?name=KK&background=fff&color=2563eb'" alt="Logo">
+            <h2>TH2K</h2>
+            <p>Hệ thống dịch vụ xe hơi chuyên nghiệp</p>
+        </div>
+        
+        <!-- MÀN HÌNH ĐĂNG NHẬP -->
+        <div class="auth-body" id="loginBox">
+            <h3>Đăng nhập hệ thống</h3>
+            <div class="form-group">
+                <i class="fa-solid fa-phone"></i>
+                <input type="tel" id="user" placeholder="Số điện thoại đăng nhập" autofocus>
+            </div>
+            <div class="form-group password-group">
+                <i class="fa-solid fa-lock"></i>
+                <input type="password" id="pass" placeholder="Mật khẩu">
+                <button type="button" class="toggle-password" onclick="togglePassword('pass', 'togglePassIcon')" aria-label="Hiện hoặc ẩn mật khẩu">
+                    <span id="togglePassIcon">👁</span>
+                </button>
+            </div>
+            <label style="display:flex; align-items:center; gap:8px; font-size:14px; color:#64748b; margin-bottom:16px;">
+                <input type="checkbox" id="rememberMe"> Ghi nhớ đăng nhập
+            </label>
+            <button class="btn" onclick="handleLogin()">ĐĂNG NHẬP <i class="fa-solid fa-arrow-right-to-bracket"></i></button>
+            <div class="auth-footer">Chưa có tài khoản? <span onclick="showReg(true)">Đăng ký ngay</span></div>
+        </div>
+
+        <!-- MÀN HÌNH ĐĂNG KÝ -->
+        <div class="auth-body" id="regBox" style="display:none">
+            <h3>Tạo tài khoản mới</h3>
+            <div class="form-group">
+                <i class="fa-solid fa-signature"></i>
+                <input type="text" id="regName" placeholder="Họ và Tên của bạn">
+            </div>
+            <div class="form-group">
+                <i class="fa-solid fa-phone"></i>
+                <input type="tel" id="regPhone" placeholder="Số điện thoại của bạn">
+            </div>
+            <div class="form-group password-group">
+                <i class="fa-solid fa-key"></i>
+                <input type="password" id="regPass" placeholder="Mật khẩu mới">
+                <button type="button" class="toggle-password" onclick="togglePassword('regPass', 'toggleRegPassIcon')" aria-label="Hiện hoặc ẩn mật khẩu">
+                    <span id="toggleRegPassIcon">👁</span>
+                </button>
+            </div>
+            <button class="btn btn-reg" onclick="handleRegister()"><i class="fa-solid fa-user-plus"></i> ĐĂNG KÝ TÀI KHOẢN</button>
+            <div class="auth-footer">Đã có tài khoản? <span onclick="showReg(false)">Quay lại đăng nhập</span></div>
+        </div>
+    </div>
+
+    <script>
+        const SESSION_KEY = 'KKTH_ACTIVE_USER';
+
+        window.addEventListener('pageshow', () => {
+            const savedUser = localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY);
+            if (savedUser) {
+                const user = JSON.parse(savedUser);
+                window.location.href = user.role === 'admin' ? 'index.html' : 'khachhang.html';
+            }
+        });
+
+        document.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter' && document.getElementById('loginBox').style.display !== 'none') {
+                handleLogin();
+            }
+        });
+
+        function showReg(isReg) {
+            document.getElementById('loginBox').style.display = isReg ? 'none' : 'block';
+            document.getElementById('regBox').style.display = isReg ? 'block' : 'none';
+        }
+
+        function togglePassword(inputId, iconId) {
+            const pass = document.getElementById(inputId);
+            const icon = document.getElementById(iconId);
+            pass.type = pass.type === 'password' ? 'text' : 'password';
+            icon.textContent = pass.type === 'password' ? '👁' : '🙈';
+        }
+
+        function validatePhone(phone) {
+            return /^0\d{9,10}$/.test(phone);
+        }
+
+        async function handleRegister() {
+            const name = document.getElementById('regName').value.trim();
+            const phone = document.getElementById('regPhone').value.trim();
+            const pass = document.getElementById('regPass').value;
+            
+            if(!name || !phone || !pass) return alert("Vui lòng nhập đủ thông tin!");
+            if(!validatePhone(phone)) return alert("Số điện thoại phải bắt đầu bằng 0 và có 10-11 chữ số!");
+            if(pass.length < 6) return alert("Mật khẩu phải có ít nhất 6 ký tự!");
+
+            try {
+                const response = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        fullName: name, 
+                        email: `${phone}@khachhang.com`,
+                        password: pass, 
+                        phoneNumber: phone, 
+                        address: "" 
+                    })
+                });
+
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    alert(result.message || "Đăng ký thất bại!");
+                    return;
+                }
+
+                syncRegisteredCustomerToAdmin(name, phone, pass);
+
+                alert("Đăng ký thành công. Thông tin khách hàng đã được cập nhật sang trang Admin.");
+                showReg(false); 
+            } catch (err) {
+                // Dự phòng cho trường hợp API C# đang lỗi khi demo: vẫn lưu local để Admin nhìn thấy khách mới.
+                syncRegisteredCustomerToAdmin(name, phone, pass);
+                alert("Server C# chưa phản hồi, nhưng tài khoản và thông tin khách đã được lưu tạm để demo. Admin có thể thấy khách này trong mục Khách hàng.");
+                showReg(false);
+            }
+        }
+
+        function syncRegisteredCustomerToAdmin(name, phone, password) {
+            const email = `${phone}@khachhang.com`;
+            const now = new Date().toLocaleString('vi-VN');
+
+            let adminCustomers = JSON.parse(localStorage.getItem('db_customer')) || [];
+            const customerIndex = adminCustomers.findIndex(c =>
+                String(c.f2 || '').trim() === phone ||
+                String(c.phoneNumber || '').trim() === phone ||
+                String(c.email || '').trim() === email
+            );
+
+            const customerData = {
+                id: customerIndex >= 0 ? adminCustomers[customerIndex].id : 'KH_WEB_' + Date.now(),
+                f1: name,
+                f2: phone,
+                f3: adminCustomers[customerIndex]?.f3 || "Chưa có xe",
+                f4: "Đăng ký từ Web",
+                fullName: name,
+                phoneNumber: phone,
+                email: email,
+                address: adminCustomers[customerIndex]?.address || "Chưa cập nhật",
+                source: "Đăng ký từ Web",
+                createdAt: adminCustomers[customerIndex]?.createdAt || now,
+                updatedAt: now
+            };
+
+            if (customerIndex >= 0) {
+                adminCustomers[customerIndex] = { ...adminCustomers[customerIndex], ...customerData };
+            } else {
+                adminCustomers.unshift(customerData);
+            }
+            localStorage.setItem('db_customer', JSON.stringify(adminCustomers));
+
+            let accounts = JSON.parse(localStorage.getItem('db_accounts')) || [];
+            const accountIndex = accounts.findIndex(acc => String(acc.user || '').trim() === phone);
+            const accountData = { name: name, user: phone, email: email, password: password, role: 'customer', createdAt: now };
+            if (accountIndex >= 0) {
+                accounts[accountIndex] = { ...accounts[accountIndex], ...accountData };
+            } else {
+                accounts.push(accountData);
+            }
+            localStorage.setItem('db_accounts', JSON.stringify(accounts));
+        }
+
+        async function handleLogin() {
+            const rawUser = document.getElementById('user').value;
+            const u = rawUser.trim();
+            const p = document.getElementById('pass').value;
+            const remember = document.getElementById('rememberMe').checked;
+
+            if(!u && !p) return alert("Vui lòng nhập số điện thoại và mật khẩu!");
+            if(!u) return alert("Vui lòng nhập số điện thoại!");
+            if(!p) return alert("Vui lòng nhập mật khẩu!");
+            if(rawUser !== u) return alert("Số điện thoại không được có khoảng trắng đầu/cuối!");
+            if(u !== 'admin' && !validatePhone(u)) return alert("Số điện thoại sai định dạng!");
+            if(p.length < 6) return alert("Mật khẩu phải có ít nhất 6 ký tự!");
+
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: u, password: p, rememberMe: remember })
+                });
+
+                const result = await response.json().catch(() => ({}));
+
+                if (response.ok) {
+                    const storage = remember ? localStorage : sessionStorage;
+                    storage.setItem(SESSION_KEY, JSON.stringify(result.user));
+                    if (!remember) localStorage.removeItem(SESSION_KEY);
+                    window.location.href = result.user.role === 'admin' ? 'index.html' : 'khachhang.html';
+                } else {
+                    alert(result.message || "Sai số điện thoại hoặc mật khẩu!");
+                }
+            } catch (err) {
+                alert("Không kết nối được server. Vui lòng chạy dotnet run rồi thử lại.");
+            }
+        }
+    </script>
+</body>
+</html>
