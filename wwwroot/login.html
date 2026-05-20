@@ -80,6 +80,44 @@
         .auth-footer span:hover { text-decoration: underline; }
         #loginBox, #regBox { animation: fadeIn 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    
+
+        /* ===== MOBILE RESPONSIVE FIX - LOGIN ===== */
+        @media (max-width: 640px) {
+            body {
+                min-height: 100vh;
+                padding: 14px;
+                align-items: flex-start;
+            }
+            .auth-card {
+                width: 100% !important;
+                max-width: 100% !important;
+                margin: 0;
+                border-radius: 18px;
+            }
+            .auth-header {
+                padding: 24px 18px !important;
+            }
+            .auth-header img {
+                width: 70px !important;
+                height: 70px !important;
+            }
+            .auth-header h2 { font-size: 22px; }
+            .auth-body {
+                padding: 24px 18px !important;
+            }
+            .auth-body h3 { font-size: 20px; }
+            .form-group input {
+                font-size: 16px;
+                padding-right: 46px;
+            }
+            .btn {
+                width: 100%;
+                min-height: 48px;
+                font-size: 15px;
+            }
+        }
+
     </style>
 </head>
 <body>

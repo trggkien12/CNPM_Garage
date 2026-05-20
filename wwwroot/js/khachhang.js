@@ -17,14 +17,38 @@
             updateStats();
         }
 
-        function logoutCustomer() {
+        function logoutCustomer(event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+
             if(confirm("Bạn muốn đăng xuất khỏi tài khoản?")) {
-                sessionStorage.clear();
+                // Chỉ xóa thông tin đăng nhập, không xóa dữ liệu xe/dịch vụ/hóa đơn của hệ thống
+                sessionStorage.removeItem('KKTH_ACTIVE_USER');
+                sessionStorage.removeItem('activeUser');
+                sessionStorage.removeItem('currentUser');
                 localStorage.removeItem('KKTH_ACTIVE_USER');
-                window.location.href = 'login.html';
+                localStorage.removeItem('activeUser');
+                localStorage.removeItem('currentUser');
+
+                window.location.href = '/login.html';
             }
         }
 
+
+
+        // Bảo đảm nút đăng xuất vẫn bấm được trên cả máy tính và điện thoại
+        document.addEventListener('DOMContentLoaded', function () {
+            const logoutBtn = document.getElementById('customerLogoutBtn');
+            if (logoutBtn) {
+                logoutBtn.addEventListener('click', logoutCustomer);
+                logoutBtn.addEventListener('touchend', function (event) {
+                    event.preventDefault();
+                    logoutCustomer(event);
+                }, { passive: false });
+            }
+        });
         function getCurrentUserKey() {
             const raw = (user && (user.user || user.email || user.phoneNumber || user.name)) || 'guest';
             return String(raw).trim().toLowerCase().replace(/[^a-z0-9@._-]/g, '_');
@@ -73,52 +97,203 @@
             if (id === 'order' && typeof loadOrders === 'function') loadOrders();
         }
 
-        // 3. SHOWROOM - TẢI DANH SÁCH SẢN PHẨM
-        function loadProducts() {
-            const products = JSON.parse(localStorage.getItem('db_service')) || [
-                { id: 'DV001', f1: 'Thay dầu máy', f2: 'Mã: DV001', f3: '350000' },
-                { id: 'DV002', f1: 'Rửa xe cao cấp', f2: 'Mã: DV002', f3: '120000' },
-                { id: 'DV003', f1: 'Kiểm tra phanh', f2: 'Mã: DV003', f3: '150000' },
-                { id: 'DV004', f1: 'Bảo dưỡng định kỳ', f2: 'Mã: DV004', f3: '800000' },
-                { id: 'DV005', f1: 'Phủ Ceramic cao cấp', f2: 'Mã: DV005', f3: '5000000' },
-                { id: 'DV006', f1: 'Vệ sinh nội thất', f2: 'Mã: DV006', f3: '500000' },
-                { id: 'DV007', f1: 'Cân bằng lốp', f2: 'Mã: DV007', f3: '250000' }
+        // 3. DỊCH VỤ SỬA CHỮA - ĐỌC CHUNG DỮ LIỆU ADMIN + KHÁCH HÀNG
+        function safeParseArray(key) {
+            try {
+                const data = JSON.parse(localStorage.getItem(key) || '[]');
+                return Array.isArray(data) ? data : [];
+            } catch (e) {
+                console.warn('Không đọc được localStorage key:', key, e);
+                return [];
+            }
+        }
+
+        function isRepairService(item) {
+            const explicitType = String(item.type || item.Type || item.category || item.Category || item.kind || item.itemType || '').toLowerCase();
+
+            // Chỉ loại phụ tùng khi dữ liệu có khai báo rõ là phụ tùng.
+            // Không dùng f5 để phân loại vì f5 thường là đường dẫn ảnh URL.
+            if (explicitType.includes('phụ tùng') || explicitType.includes('phu tung') || explicitType.includes('part') || explicitType.includes('spare')) {
+                return false;
+            }
+
+            const name = String(item.f1 || item.name || item.Name || item.serviceName || item.ServiceName || '').toLowerCase();
+            if (!name.trim()) return false;
+
+            // Nếu không có type/category thì vẫn cho hiện vì Admin cũ thường chỉ lưu f1, f2, f3, f4, f5.
+            return true;
+        }
+
+        function normalizeService(item, index) {
+            const imageFromF5 = String(item.f5 || '').startsWith('http') ? item.f5 : '';
+            const name = item.f1 || item.name || item.Name || item.serviceName || item.ServiceName || 'Dịch vụ sửa chữa';
+            const code = item.f2 || item.code || item.Code || item.serviceCode || item.ServiceCode || ('DV' + String(index + 1).padStart(3, '0'));
+            const rawPrice = item.f3 ?? item.price ?? item.Price ?? item.unitPrice ?? item.UnitPrice ?? 0;
+
+            return {
+                id: item.id || item.Id || item.serviceId || item.ServiceId || code || ('DV_' + index),
+                name: String(name),
+                code: String(code),
+                price: Number(String(rawPrice).replace(/[^0-9.-]/g, '')) || 0,
+                desc: item.description || item.Description || item.desc || item.note || item.f6 || 'Dịch vụ sửa chữa, bảo dưỡng và chăm sóc xe tại garage.',
+                image: item.img || item.image || item.imageUrl || item.ImageUrl || imageFromF5 || ''
+            };
+        }
+
+        async function readServicesFromApi() {
+            const endpoints = [
+                '/api/services',
+                '/api/service',
+                '/api/repairservices',
+                '/api/RepairServices',
+                '/api/products'
             ];
-            
-            const showroom = document.getElementById('showroom-list');
+
+            for (const url of endpoints) {
+                try {
+                    const res = await fetch(url, { cache: 'no-store' });
+                    if (!res.ok) continue;
+                    const data = await res.json();
+                    if (Array.isArray(data)) return data;
+                    if (Array.isArray(data.data)) return data.data;
+                    if (Array.isArray(data.items)) return data.items;
+                } catch (e) {
+                    // API nào không tồn tại thì bỏ qua, đọc localStorage tiếp.
+                }
+            }
+            return [];
+        }
+
+        async function getAllServicesForCustomer() {
+            const localKeys = [
+                'db_service',      // key Admin đang dùng nhiều nhất
+                'db_services',
+                'services',
+                'db_repair_services',
+                'db_repairServices',
+                'db_product'
+            ];
+
+            let rawServices = [];
+            localKeys.forEach(key => {
+                rawServices = rawServices.concat(safeParseArray(key));
+            });
+
+            // Nếu backend/API có dịch vụ thì merge thêm vào.
+            const apiServices = await readServicesFromApi();
+            rawServices = rawServices.concat(apiServices);
+
+            // Xóa trùng theo id/code/name.
+            const seen = new Set();
+            let services = rawServices
+                .filter(isRepairService)
+                .map(normalizeService)
+                .filter(s => {
+                    const k = String(s.id || s.code || s.name).toLowerCase();
+                    if (seen.has(k)) return false;
+                    seen.add(k);
+                    return true;
+                });
+
+            // Dữ liệu mẫu để trang khách hàng không bị trống khi mới chạy project.
+            if (services.length === 0) {
+                services = [
+                    { id: 'DV001', name: 'Thay dầu máy', code: 'DV001', price: 350000, desc: 'Thay dầu động cơ, kiểm tra lọc dầu và tình trạng vận hành.' },
+                    { id: 'DV002', name: 'Rửa xe cao cấp', code: 'DV002', price: 80000, desc: 'Vệ sinh ngoại thất, làm sạch kính, mâm và thân xe.' },
+                    { id: 'DV003', name: 'Kiểm tra phanh', code: 'DV003', price: 150000, desc: 'Kiểm tra má phanh, dầu phanh và độ an toàn hệ thống phanh.' },
+                    { id: 'DV004', name: 'Bảo dưỡng định kỳ', code: 'DV004', price: 800000, desc: 'Kiểm tra tổng quát xe theo quy trình bảo dưỡng garage.' },
+                    { id: 'DV005', name: 'Phủ Ceramic cao cấp', code: 'DV005', price: 5000000, desc: 'Bảo vệ sơn xe, tăng độ bóng và hạn chế bám bẩn.' }
+                ];
+            }
+
+            return services;
+        }
+
+        function getServiceImage(service, index) {
+            const defaults = [
+                'https://images.unsplash.com/photo-1487754180451-c456f719a1fc?auto=format&fit=crop&w=1200&q=80',
+                'https://images.unsplash.com/photo-1607860108855-64acf2078ed9?auto=format&fit=crop&w=1200&q=80',
+                'https://images.unsplash.com/photo-1625047509168-a7026f36de04?auto=format&fit=crop&w=1200&q=80',
+                'https://images.unsplash.com/photo-1632823469850-1b7b1e8b7e1e?auto=format&fit=crop&w=1200&q=80',
+                'https://images.unsplash.com/photo-1603584173870-7f23fdae1b7a?auto=format&fit=crop&w=1200&q=80'
+            ];
+            return service.image || defaults[index % defaults.length];
+        }
+
+        async function loadProducts() {
+            const services = await getAllServicesForCustomer();
+
+            const list = document.getElementById('showroom-list') 
+                      || document.getElementById('service-list') 
+                      || document.getElementById('services-list');
+
             const carSelect = document.getElementById('car-select-options');
 
-            if(products.length === 0) {
-                showroom.innerHTML = `<div style="grid-column: 1/-1; text-align: center; padding: 80px; background: white; border-radius: 20px; border: 1px solid var(--border);">
-                    <i class="fa-solid fa-box-open" style="font-size: 50px; color: #cbd5e1; margin-bottom: 20px;"></i>
-                    <h3 style="color: var(--text-main); margin-bottom: 10px;">Chưa có dịch vụ nào</h3>
-                    <p style="color: var(--text-muted);">Gara hiện đang cập nhật danh sách dịch vụ. Vui lòng quay lại sau.</p>
-                </div>`;
+            if (!list) {
+                console.error('Không tìm thấy vùng hiển thị dịch vụ: showroom-list/service-list/services-list');
                 return;
             }
 
-            showroom.innerHTML = products.map(item => `
-                <div class="item-card">
-                    <div class="item-img"><i class="fa-solid fa-car-side"></i></div>
-                    <div class="item-content">
-                        <div><span style="font-size: 11px; font-weight: 800; color: var(--success); background: #dcfce7; padding: 6px 10px; border-radius: 6px; letter-spacing: 0.5px;">ĐANG KINH DOANH</span></div>
-                        <h3 style="margin-top: 15px;">${item.f1}</h3>
-                        <p style="font-size: 13px; color: var(--text-muted); font-weight: 500;">${item.f2}</p>
-                        <span class="item-price">${Number(item.f3).toLocaleString('vi-VN')}đ</span>
-                        
-                        <div class="action-buttons">
-                            <button class="btn-cart" onclick="addToCart('${item.id}', '${item.f1}', ${item.f3})">
-                                <i class="fa-solid fa-bag-shopping"></i> Chọn dịch vụ
-                            </button>
-                            <button class="btn-buy" onclick="buyNow('${item.id}', '${item.f1}', ${item.f3})">
-                                Đặt lịch ngay
-                            </button>
+            if (services.length === 0) {
+                list.innerHTML = `
+                    <div style="grid-column:1/-1; background:white; padding:30px; border-radius:16px; text-align:center;">
+                        <h3>Chưa có dịch vụ sửa chữa</h3>
+                        <p>Admin cần thêm dịch vụ trong trang quản trị.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            list.innerHTML = services.map((item, index) => {
+                const image = getServiceImage(item, index);
+                const safeName = String(item.name).replace(/'/g, "\'");
+                const safeId = String(item.id).replace(/'/g, "\'");
+
+                return `
+                    <div class="item-card">
+                        <div class="item-img" style="background-image:url('${image}')">
+                            <i class="fa-solid fa-screwdriver-wrench"></i>
+                        </div>
+                        <div class="item-content">
+                            <div>
+                                <span style="font-size:11px; font-weight:800; color:var(--success); background:#dcfce7; padding:6px 10px; border-radius:6px;">
+                                    DỊCH VỤ SỬA CHỮA
+                                </span>
+                            </div>
+                            <h3 style="margin-top:15px;">${item.name}</h3>
+                            <p style="font-size:13px; color:var(--text-muted); font-weight:700;">Mã: ${item.code}</p>
+                            <p style="font-size:13px; color:var(--text-muted); line-height:1.6; margin-top:6px;">${item.desc}</p>
+                            <span class="item-price">${Number(item.price).toLocaleString('vi-VN')}đ</span>
+
+                            <div class="action-buttons">
+                                <button class="btn-cart" onclick="addToCart('${safeId}', '${safeName}', ${Number(item.price)})">
+                                    <i class="fa-solid fa-check"></i> Chọn dịch vụ
+                                </button>
+                                <button class="btn-buy" onclick="buyNow('${safeId}', '${safeName}', ${Number(item.price)})">
+                                    Đặt lịch ngay
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            `).join('');
+                `;
+            }).join('');
 
-            refreshBookingOptions();
+            // Nếu khách chưa có xe/dịch vụ đã chọn thì select sẽ có danh sách dịch vụ để đặt lịch nhanh.
+            if (carSelect) {
+                const myCars = JSON.parse(localStorage.getItem(getMyCarKey ? getMyCarKey() : '')) || [];
+                const selectedServices = JSON.parse(localStorage.getItem(getCartKey ? getCartKey() : '')) || [];
+                if (myCars.length === 0 && selectedServices.length === 0) {
+                    carSelect.innerHTML = services.map(item => `<option value="SV_${item.id}" data-type="service">Dịch vụ: ${item.name}</option>`).join('');
+                }
+            }
+        }
+
+        function selectServiceForBooking(id, name, price) {
+            addToCart(id, name, price);
+        }
+
+        function bookServiceNow(id, name, price) {
+            buyNow(id, name, price);
         }
 
         // ==========================================
@@ -743,3 +918,131 @@
             loadMyBookings();
             loadOrders();
         };
+
+
+// =========================================================
+// BẢN SỬA GỘP: KHÁCH HÀNG ĐỌC DỊCH VỤ TỪ SQL/API + MOBILE
+// Admin thêm dịch vụ vào SQL qua /api/Services thì khách hàng sẽ thấy ở đây.
+// =========================================================
+function unwrapCustomerApiData(json) {
+    if (Array.isArray(json)) return json;
+    if (json && Array.isArray(json.data)) return json.data;
+    if (json && Array.isArray(json.value)) return json.value;
+    if (json && json.data) return json.data;
+    return [];
+}
+
+function normalizeServiceForCustomer(item, index = 0) {
+    return {
+        id: item.serviceId || item.ServiceId || item.id || item.Id || item.f2 || ('DV' + index),
+        name: item.serviceName || item.ServiceName || item.f1 || item.name || item.Name || 'Dịch vụ sửa chữa',
+        code: item.f2 || ('DV' + String(item.serviceId || item.ServiceId || item.id || item.Id || index + 1).padStart(3, '0')),
+        price: Number(item.price ?? item.Price ?? item.f3 ?? 0) || 0,
+        desc: item.description || item.Description || item.f4 || item.desc || 'Dịch vụ sửa chữa tại garage TH2K.'
+    };
+}
+
+async function getAllServicesForCustomer() {
+    // Ưu tiên SQL Server/API để máy khác hoặc điện thoại mở qua Cloudflare vẫn thấy dữ liệu Admin đã thêm.
+    try {
+        const res = await fetch('/api/Services', { cache: 'no-store' });
+        if (res.ok) {
+            const json = await res.json();
+            const apiServices = unwrapCustomerApiData(json).map(normalizeServiceForCustomer).filter(s => s.name);
+            if (apiServices.length > 0) {
+                localStorage.setItem('db_service', JSON.stringify(apiServices.map(s => ({ id: s.id, f1: s.name, f2: s.code, f3: s.price, f4: s.desc }))));
+                return apiServices;
+            }
+        }
+    } catch (e) {
+        console.warn('Không tải được /api/Services, dùng dữ liệu localStorage:', e.message);
+    }
+
+    const keys = ['db_service', 'db_services', 'services'];
+    for (const key of keys) {
+        const raw = JSON.parse(localStorage.getItem(key) || '[]');
+        if (Array.isArray(raw) && raw.length > 0) {
+            return raw.map(normalizeServiceForCustomer).filter(s => s.name);
+        }
+    }
+    return [];
+}
+
+async function loadProducts() {
+    const services = await getAllServicesForCustomer();
+    const list = document.getElementById('showroom-list') || document.getElementById('service-list') || document.getElementById('services-list');
+    const carSelect = document.getElementById('car-select-options');
+
+    if (!list) {
+        console.error('Không tìm thấy vùng hiển thị dịch vụ: showroom-list/service-list/services-list');
+        return;
+    }
+
+    if (services.length === 0) {
+        list.innerHTML = `
+            <div style="grid-column: 1/-1; background:white; padding:30px; border-radius:16px; text-align:center;">
+                <h3>Chưa có dịch vụ sửa chữa</h3>
+                <p>Admin cần thêm dịch vụ trong trang quản trị. Nếu đã thêm rồi, kiểm tra SQL Server/API /api/Services.</p>
+            </div>`;
+        if (carSelect) carSelect.innerHTML = '<option value="NONE">Chưa có dịch vụ</option>';
+        return;
+    }
+
+    list.innerHTML = services.map((item, index) => {
+        const safeName = String(item.name || '').replace(/'/g, "\\'");
+        return `
+            <div class="item-card">
+                <div class="item-img"><i class="fa-solid fa-screwdriver-wrench"></i></div>
+                <div class="item-content">
+                    <div><span style="font-size: 11px; font-weight: 800; color: var(--success); background: #dcfce7; padding: 6px 10px; border-radius: 6px;">DỊCH VỤ SỬA CHỮA</span></div>
+                    <h3 style="margin-top: 15px;">${item.name}</h3>
+                    <p style="font-size: 13px; color: var(--text-muted);">Mã: ${item.code || ''}</p>
+                    <p style="font-size: 13px; color: var(--text-muted); min-height:40px;">${item.desc || ''}</p>
+                    <span class="item-price">${Number(item.price || 0).toLocaleString('vi-VN')}đ</span>
+                    <div class="action-buttons">
+                        <button class="btn-cart" onclick="addToCart('${item.id}', '${safeName}', ${Number(item.price || 0)})"><i class="fa-solid fa-check"></i> Chọn dịch vụ</button>
+                        <button class="btn-buy" onclick="buyNow('${item.id}', '${safeName}', ${Number(item.price || 0)})">Đặt lịch ngay</button>
+                    </div>
+                </div>
+            </div>`;
+    }).join('');
+
+    if (carSelect) {
+        const carOptions = Array.from(carSelect.options || []).filter(o => String(o.value || '').startsWith('CAR_')).map(o => `<option value="${o.value}">${o.text}</option>`).join('');
+        const serviceOptions = services.map(item => `<option value="SV_${item.id}">Dịch vụ: ${item.name}</option>`).join('');
+        carSelect.innerHTML = carOptions + serviceOptions;
+    }
+}
+
+// Ghi đè refreshBookingOptions để vừa có xe của tôi, vừa có dịch vụ từ SQL/API.
+async function refreshBookingOptions(preferValue = '') {
+    const select = document.getElementById('car-select-options');
+    if(!select) return;
+    const myCars = JSON.parse(localStorage.getItem(getMyCarKey())) || [];
+    const cart = JSON.parse(localStorage.getItem(getCartKey())) || [];
+    const services = await getAllServicesForCustomer();
+    let options = [];
+
+    myCars.forEach(car => options.push({ value: 'CAR_' + car.id, text: `${car.brand || ''} ${car.model || ''} - ${car.plate || ''}`, type: 'car' }));
+    cart.forEach(item => options.push({ value: 'SV_' + item.id, text: `Dịch vụ đã chọn: ${item.name}`, type: 'service' }));
+    if(cart.length === 0) services.forEach(s => options.push({ value: 'SV_' + s.id, text: `Dịch vụ: ${s.name}`, type: 'service' }));
+    if(options.length === 0) options.push({ value: 'NONE', text: 'Chưa có xe/dịch vụ - vui lòng thêm xe hoặc chọn dịch vụ trước', type: 'none' });
+
+    select.innerHTML = options.map(o => `<option value="${o.value}" data-type="${o.type}">${o.text}</option>`).join('');
+    if(preferValue) select.value = preferValue;
+}
+
+// Bảo đảm khi quay lại tab dịch vụ sẽ tải lại từ SQL/API.
+const oldNavForServiceReload = typeof nav === 'function' ? nav : null;
+if (oldNavForServiceReload) {
+    nav = function(id) {
+        oldNavForServiceReload(id);
+        if (id === 'shop') loadProducts();
+        if (id === 'book') refreshBookingOptions();
+    }
+}
+
+window.addEventListener('load', function() {
+    loadProducts();
+    refreshBookingOptions();
+});
