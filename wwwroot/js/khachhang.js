@@ -2,6 +2,8 @@
         const user = JSON.parse(sessionStorage.getItem('KKTH_ACTIVE_USER') || localStorage.getItem('KKTH_ACTIVE_USER')) || JSON.parse(sessionStorage.getItem('activeUser')) || { name: 'Khách Demo', user: 'khach@demo.com' }; 
         
         let selectedBookingType = 'Xem xe tại showroom';
+        let cachedBookingServices = [];
+        let selectedBookingServiceId = '';
 
         function syncUserInfo() {
             if(!user) return;
@@ -17,38 +19,14 @@
             updateStats();
         }
 
-        function logoutCustomer(event) {
-            if (event) {
-                event.preventDefault();
-                event.stopPropagation();
-            }
-
+        function logoutCustomer() {
             if(confirm("Bạn muốn đăng xuất khỏi tài khoản?")) {
-                // Chỉ xóa thông tin đăng nhập, không xóa dữ liệu xe/dịch vụ/hóa đơn của hệ thống
-                sessionStorage.removeItem('KKTH_ACTIVE_USER');
-                sessionStorage.removeItem('activeUser');
-                sessionStorage.removeItem('currentUser');
+                sessionStorage.clear();
                 localStorage.removeItem('KKTH_ACTIVE_USER');
-                localStorage.removeItem('activeUser');
-                localStorage.removeItem('currentUser');
-
-                window.location.href = '/login.html';
+                window.location.href = 'login.html';
             }
         }
 
-
-
-        // Bảo đảm nút đăng xuất vẫn bấm được trên cả máy tính và điện thoại
-        document.addEventListener('DOMContentLoaded', function () {
-            const logoutBtn = document.getElementById('customerLogoutBtn');
-            if (logoutBtn) {
-                logoutBtn.addEventListener('click', logoutCustomer);
-                logoutBtn.addEventListener('touchend', function (event) {
-                    event.preventDefault();
-                    logoutCustomer(event);
-                }, { passive: false });
-            }
-        });
         function getCurrentUserKey() {
             const raw = (user && (user.user || user.email || user.phoneNumber || user.name)) || 'guest';
             return String(raw).trim().toLowerCase().replace(/[^a-z0-9@._-]/g, '_');
@@ -140,6 +118,65 @@
             };
         }
 
+
+        function populateBookingServiceSelect(services) {
+            cachedBookingServices = Array.isArray(services) ? services : [];
+            const select = document.getElementById('booking-service-select');
+            if (!select) return;
+
+            if (cachedBookingServices.length === 0) {
+                select.innerHTML = '<option value="NONE">Chưa có dịch vụ - Admin cần thêm dịch vụ</option>';
+                return;
+            }
+
+            select.innerHTML = cachedBookingServices.map(s => `
+                <option value="${s.id}" data-price="${Number(s.price) || 0}">
+                    ${s.name} - ${Number(s.price || 0).toLocaleString('vi-VN')}đ
+                </option>
+            `).join('');
+
+            if (selectedBookingServiceId) {
+                select.value = selectedBookingServiceId;
+            }
+        }
+
+        function getSelectedBookingService() {
+            const select = document.getElementById('booking-service-select');
+            if (!select || !select.value || select.value === 'NONE') return null;
+            return cachedBookingServices.find(s => String(s.id) === String(select.value)) || null;
+        }
+
+        function createPendingInvoiceForBooking(booking, service) {
+            const amount = Number(service && service.price) || Number(booking.estimatedAmount) || 0;
+            if (amount <= 0) return null;
+
+            let orders = JSON.parse(localStorage.getItem('db_order') || '[]');
+            const existed = orders.find(o => String(o.bookingId || '') === String(booking.id));
+            if (existed) return existed;
+
+            const invoice = {
+                id: 'HD' + Math.floor(Math.random() * 1000000),
+                bookingId: booking.id,
+                ownerUser: getCurrentUserKey(),
+                customerAccount: booking.customerAccount || user.user || user.email || user.phoneNumber || '',
+                customerName: booking.customerName || user.name || user.fullName || 'Khách hàng',
+                f1: 'Hóa đơn tạm tính: ' + (service ? service.name : booking.carService || 'Dịch vụ sửa chữa'),
+                f2: booking.customerName || user.name || user.fullName || 'Khách hàng',
+                f3: amount,
+                f4: new Date().toLocaleString('vi-VN'),
+                carService: service ? service.name : booking.carService || '',
+                selectedTarget: booking.selectedTarget || '',
+                paymentMethod: '',
+                paymentStatus: 'Chưa thanh toán',
+                status: 'Chưa thanh toán',
+                createdFrom: 'Tạo tự động sau khi khách đặt lịch'
+            };
+
+            orders.unshift(invoice);
+            localStorage.setItem('db_order', JSON.stringify(orders));
+            return invoice;
+        }
+
         async function readServicesFromApi() {
             const endpoints = [
                 '/api/services',
@@ -222,6 +259,7 @@
 
         async function loadProducts() {
             const services = await getAllServicesForCustomer();
+            populateBookingServiceSelect(services);
 
             const list = document.getElementById('showroom-list') 
                       || document.getElementById('service-list') 
@@ -398,7 +436,7 @@
                 customerAccount: pendingQrOrder.customerAccount || user.user || user.email || user.phoneNumber || '',
                 customerName: pendingQrOrder.customerName || user.name || user.fullName || 'Khách hàng',
                 paymentMethod: 'Chuyển khoản VCB',
-                paymentStatus: 'Chờ Admin xác nhận chuyển khoản QR VCB',
+                paymentStatus: 'Chờ Admin/Nhân viên xác nhận chuyển khoản QR VCB',
                 status: 'Chờ xác nhận thanh toán QR',
                 requestedAt: now,
                 bankName: 'VCB',
@@ -459,8 +497,14 @@
         }
 
         function buyNow(id, name, price) {
-            addToCart(id, name, price);
-            closeCartModal();
+            const service = { id, name, price: Number(price) || 0 };
+            if (!cachedBookingServices.find(s => String(s.id) === String(id))) {
+                cachedBookingServices.push(service);
+                populateBookingServiceSelect(cachedBookingServices);
+            }
+            selectedBookingServiceId = String(id);
+            const serviceSelect = document.getElementById('booking-service-select');
+            if (serviceSelect) serviceSelect.value = selectedBookingServiceId;
             nav('book');
             alert('Đã chọn dịch vụ: ' + name + '. Bạn hãy chọn ngày giờ hẹn rồi gửi yêu cầu đặt lịch.');
         }
@@ -490,11 +534,17 @@
             localStorage.setItem('db_car', JSON.stringify(cars));
         }
 
-        function refreshBookingOptions(preferValue = '') {
+        async function refreshBookingOptions(preferValue = '') {
             const select = document.getElementById('car-select-options');
+            const serviceSelect = document.getElementById('booking-service-select');
+
+            if (serviceSelect && cachedBookingServices.length === 0) {
+                const services = await getAllServicesForCustomer();
+                populateBookingServiceSelect(services);
+            }
+
             if(!select) return;
             const myCars = JSON.parse(localStorage.getItem(getMyCarKey())) || [];
-            const selectedServices = JSON.parse(localStorage.getItem(getCartKey())) || [];
             let options = [];
 
             myCars.forEach(car => {
@@ -505,16 +555,8 @@
                 });
             });
 
-            selectedServices.forEach(item => {
-                options.push({
-                    value: 'SV_' + item.id,
-                    text: `Dịch vụ đã chọn: ${item.name}`,
-                    type: 'service'
-                });
-            });
-
             if(options.length === 0) {
-                options.push({ value: 'NONE', text: 'Chưa có xe/dịch vụ - vui lòng thêm xe hoặc chọn dịch vụ trước', type: 'none' });
+                options.push({ value: 'NONE', text: 'Chưa có xe - vẫn có thể đặt lịch theo dịch vụ đã chọn', type: 'none' });
             }
 
             select.innerHTML = options.map(o => `<option value="${o.value}" data-type="${o.type}">${o.text}</option>`).join('');
@@ -720,42 +762,66 @@
         function submitBooking() {
             const dateInput = document.getElementById('booking-date').value;
             const selectEl = document.getElementById('car-select-options');
-            const selectedOption = selectEl.options[selectEl.selectedIndex];
-            const carName = selectedOption ? selectedOption.text : 'Chưa chọn xe/dịch vụ';
-            const selectedValue = selectedOption ? selectedOption.value : '';
+            const selectedOption = selectEl && selectEl.options.length ? selectEl.options[selectEl.selectedIndex] : null;
+            const carName = selectedOption ? selectedOption.text : 'Chưa chọn xe';
+            const selectedValue = selectedOption ? selectedOption.value : 'NONE';
+            const selectedService = getSelectedBookingService();
             const note = document.getElementById('booking-note').value;
 
             if(!dateInput) {
-                alert("Vui lòng chọn Ngày & Giờ hẹn!"); return;
+                alert('Vui lòng chọn Ngày & Giờ hẹn!');
+                return;
             }
 
-            let bookings = JSON.parse(localStorage.getItem('db_booking')) || [];
-            bookings.push({
-                id: 'BK' + Math.floor(Math.random() * 10000),
+            if(!selectedService) {
+                alert('Vui lòng chọn dịch vụ sửa chữa!');
+                return;
+            }
+
+            const now = new Date().toLocaleString('vi-VN');
+            const booking = {
+                id: 'BK' + Math.floor(Math.random() * 100000),
                 ownerUser: getCurrentUserKey(),
                 customerAccount: user.user || user.email || user.phoneNumber || '',
                 customerName: user.name || user.fullName || 'Khách hàng',
                 customerEmail: user.user || user.email || '',
                 type: selectedBookingType,
-                carService: carName,
+                carService: selectedService.name,
+                serviceId: selectedService.id,
+                serviceName: selectedService.name,
+                estimatedAmount: Number(selectedService.price) || 0,
                 selectedTarget: selectedValue,
+                carInfo: carName,
                 date: dateInput.replace('T', ' '),
-                note: note,
+                note: note || `Khách đặt lịch dịch vụ: ${selectedService.name}. Tạm tính: ${Number(selectedService.price || 0).toLocaleString('vi-VN')}đ`,
                 status: 'Chờ Gara xác nhận',
                 rejectionReason: '',
                 rejectedAt: '',
                 approvedAt: '',
-                createdAt: new Date().toLocaleString('vi-VN')
-            });
+                createdAt: now
+            };
 
+            let bookings = JSON.parse(localStorage.getItem('db_booking') || '[]');
+            bookings.push(booking);
             localStorage.setItem('db_booking', JSON.stringify(bookings));
             loadMyBookings();
-            
-            alert("Gửi yêu cầu đặt lịch thành công! Nhân viên Gara sẽ sớm liên hệ xác nhận.");
+
+            // Tạo hóa đơn tạm tính để khách có thể quét QR.
+            // Lưu ý: bấm “Đã chuyển khoản” chỉ chuyển sang trạng thái CHỜ ADMIN XÁC NHẬN,
+            // không tự chuyển thành hoàn tất.
+            const invoice = createPendingInvoiceForBooking(booking, selectedService);
+
             document.getElementById('booking-date').value = '';
             document.getElementById('booking-note').value = '';
             updateStats();
-            nav('home');
+
+            if (invoice) {
+                alert('Gửi lịch hẹn thành công! Hệ thống sẽ mở QR thanh toán tạm tính. Sau khi chuyển khoản, hóa đơn sẽ chờ Admin/Nhân viên xác nhận.');
+                openQrPayment({ ...invoice, clearCart: false });
+            } else {
+                alert('Gửi yêu cầu đặt lịch thành công! Dịch vụ chưa có giá nên chưa thể tạo QR thanh toán.');
+                nav('book');
+            }
         }
 
         function getBookingBadgeClass(status) {
@@ -918,131 +984,3 @@
             loadMyBookings();
             loadOrders();
         };
-
-
-// =========================================================
-// BẢN SỬA GỘP: KHÁCH HÀNG ĐỌC DỊCH VỤ TỪ SQL/API + MOBILE
-// Admin thêm dịch vụ vào SQL qua /api/Services thì khách hàng sẽ thấy ở đây.
-// =========================================================
-function unwrapCustomerApiData(json) {
-    if (Array.isArray(json)) return json;
-    if (json && Array.isArray(json.data)) return json.data;
-    if (json && Array.isArray(json.value)) return json.value;
-    if (json && json.data) return json.data;
-    return [];
-}
-
-function normalizeServiceForCustomer(item, index = 0) {
-    return {
-        id: item.serviceId || item.ServiceId || item.id || item.Id || item.f2 || ('DV' + index),
-        name: item.serviceName || item.ServiceName || item.f1 || item.name || item.Name || 'Dịch vụ sửa chữa',
-        code: item.f2 || ('DV' + String(item.serviceId || item.ServiceId || item.id || item.Id || index + 1).padStart(3, '0')),
-        price: Number(item.price ?? item.Price ?? item.f3 ?? 0) || 0,
-        desc: item.description || item.Description || item.f4 || item.desc || 'Dịch vụ sửa chữa tại garage TH2K.'
-    };
-}
-
-async function getAllServicesForCustomer() {
-    // Ưu tiên SQL Server/API để máy khác hoặc điện thoại mở qua Cloudflare vẫn thấy dữ liệu Admin đã thêm.
-    try {
-        const res = await fetch('/api/Services', { cache: 'no-store' });
-        if (res.ok) {
-            const json = await res.json();
-            const apiServices = unwrapCustomerApiData(json).map(normalizeServiceForCustomer).filter(s => s.name);
-            if (apiServices.length > 0) {
-                localStorage.setItem('db_service', JSON.stringify(apiServices.map(s => ({ id: s.id, f1: s.name, f2: s.code, f3: s.price, f4: s.desc }))));
-                return apiServices;
-            }
-        }
-    } catch (e) {
-        console.warn('Không tải được /api/Services, dùng dữ liệu localStorage:', e.message);
-    }
-
-    const keys = ['db_service', 'db_services', 'services'];
-    for (const key of keys) {
-        const raw = JSON.parse(localStorage.getItem(key) || '[]');
-        if (Array.isArray(raw) && raw.length > 0) {
-            return raw.map(normalizeServiceForCustomer).filter(s => s.name);
-        }
-    }
-    return [];
-}
-
-async function loadProducts() {
-    const services = await getAllServicesForCustomer();
-    const list = document.getElementById('showroom-list') || document.getElementById('service-list') || document.getElementById('services-list');
-    const carSelect = document.getElementById('car-select-options');
-
-    if (!list) {
-        console.error('Không tìm thấy vùng hiển thị dịch vụ: showroom-list/service-list/services-list');
-        return;
-    }
-
-    if (services.length === 0) {
-        list.innerHTML = `
-            <div style="grid-column: 1/-1; background:white; padding:30px; border-radius:16px; text-align:center;">
-                <h3>Chưa có dịch vụ sửa chữa</h3>
-                <p>Admin cần thêm dịch vụ trong trang quản trị. Nếu đã thêm rồi, kiểm tra SQL Server/API /api/Services.</p>
-            </div>`;
-        if (carSelect) carSelect.innerHTML = '<option value="NONE">Chưa có dịch vụ</option>';
-        return;
-    }
-
-    list.innerHTML = services.map((item, index) => {
-        const safeName = String(item.name || '').replace(/'/g, "\\'");
-        return `
-            <div class="item-card">
-                <div class="item-img"><i class="fa-solid fa-screwdriver-wrench"></i></div>
-                <div class="item-content">
-                    <div><span style="font-size: 11px; font-weight: 800; color: var(--success); background: #dcfce7; padding: 6px 10px; border-radius: 6px;">DỊCH VỤ SỬA CHỮA</span></div>
-                    <h3 style="margin-top: 15px;">${item.name}</h3>
-                    <p style="font-size: 13px; color: var(--text-muted);">Mã: ${item.code || ''}</p>
-                    <p style="font-size: 13px; color: var(--text-muted); min-height:40px;">${item.desc || ''}</p>
-                    <span class="item-price">${Number(item.price || 0).toLocaleString('vi-VN')}đ</span>
-                    <div class="action-buttons">
-                        <button class="btn-cart" onclick="addToCart('${item.id}', '${safeName}', ${Number(item.price || 0)})"><i class="fa-solid fa-check"></i> Chọn dịch vụ</button>
-                        <button class="btn-buy" onclick="buyNow('${item.id}', '${safeName}', ${Number(item.price || 0)})">Đặt lịch ngay</button>
-                    </div>
-                </div>
-            </div>`;
-    }).join('');
-
-    if (carSelect) {
-        const carOptions = Array.from(carSelect.options || []).filter(o => String(o.value || '').startsWith('CAR_')).map(o => `<option value="${o.value}">${o.text}</option>`).join('');
-        const serviceOptions = services.map(item => `<option value="SV_${item.id}">Dịch vụ: ${item.name}</option>`).join('');
-        carSelect.innerHTML = carOptions + serviceOptions;
-    }
-}
-
-// Ghi đè refreshBookingOptions để vừa có xe của tôi, vừa có dịch vụ từ SQL/API.
-async function refreshBookingOptions(preferValue = '') {
-    const select = document.getElementById('car-select-options');
-    if(!select) return;
-    const myCars = JSON.parse(localStorage.getItem(getMyCarKey())) || [];
-    const cart = JSON.parse(localStorage.getItem(getCartKey())) || [];
-    const services = await getAllServicesForCustomer();
-    let options = [];
-
-    myCars.forEach(car => options.push({ value: 'CAR_' + car.id, text: `${car.brand || ''} ${car.model || ''} - ${car.plate || ''}`, type: 'car' }));
-    cart.forEach(item => options.push({ value: 'SV_' + item.id, text: `Dịch vụ đã chọn: ${item.name}`, type: 'service' }));
-    if(cart.length === 0) services.forEach(s => options.push({ value: 'SV_' + s.id, text: `Dịch vụ: ${s.name}`, type: 'service' }));
-    if(options.length === 0) options.push({ value: 'NONE', text: 'Chưa có xe/dịch vụ - vui lòng thêm xe hoặc chọn dịch vụ trước', type: 'none' });
-
-    select.innerHTML = options.map(o => `<option value="${o.value}" data-type="${o.type}">${o.text}</option>`).join('');
-    if(preferValue) select.value = preferValue;
-}
-
-// Bảo đảm khi quay lại tab dịch vụ sẽ tải lại từ SQL/API.
-const oldNavForServiceReload = typeof nav === 'function' ? nav : null;
-if (oldNavForServiceReload) {
-    nav = function(id) {
-        oldNavForServiceReload(id);
-        if (id === 'shop') loadProducts();
-        if (id === 'book') refreshBookingOptions();
-    }
-}
-
-window.addEventListener('load', function() {
-    loadProducts();
-    refreshBookingOptions();
-});
