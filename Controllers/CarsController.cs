@@ -18,10 +18,28 @@ namespace AutoGarageManager.Controllers
         }
 
         [HttpGet]
-        public async Task<ActionResult<ApiResponse<IEnumerable<Car>>>> GetCars()
+        public async Task<IActionResult> GetCars()
         {
-            var cars = await _context.Cars.Include(c => c.Customer).OrderByDescending(c => c.CarId).ToListAsync();
-            return Ok(ApiResponse<IEnumerable<Car>>.SuccessResponse(cars));
+            var cars = await _context.Cars
+                .Include(c => c.Customer)
+                .OrderByDescending(c => c.CarId)
+                .Select(c => new
+                {
+                    c.CarId,
+                    Id = c.CarId,
+                    c.LicensePlate,
+                    c.Brand,
+                    c.Model,
+                    c.Year,
+                    c.CustomerId,
+                    CustomerName = c.Customer != null ? c.Customer.FullName : "Khách hàng",
+                    CustomerPhone = c.Customer != null ? c.Customer.PhoneNumber : "",
+                    CustomerEmail = c.Customer != null ? c.Customer.Email : "",
+                    Status = "Đang hoạt động"
+                })
+                .ToListAsync();
+
+            return Ok(ApiResponse.SuccessResponse(cars));
         }
 
         [HttpGet("{id}")]
@@ -40,15 +58,15 @@ namespace AutoGarageManager.Controllers
         {
             if (!ModelState.IsValid) return BadRequest(ApiResponse<Car>.Failure("Dữ liệu không hợp lệ", ModelState));
 
-            dto.LicensePlate = dto.LicensePlate.Trim().ToUpper();
+            dto.LicensePlate = NormalizePlate(dto.LicensePlate);
             dto.Brand = dto.Brand.Trim();
             dto.Model = dto.Model.Trim();
 
             var customerExists = await _context.Customers.AnyAsync(c => c.Id == dto.CustomerId);
             if (!customerExists) return NotFound(ApiResponse<Car>.Failure("Không tìm thấy khách hàng"));
 
-            var plateExists = await _context.Cars.AnyAsync(c => c.LicensePlate == dto.LicensePlate);
-            if (plateExists) return BadRequest(ApiResponse<Car>.Failure("Biển số xe đã tồn tại"));
+            var plateExists = await _context.Cars.AnyAsync(c => c.LicensePlate.ToUpper() == dto.LicensePlate);
+            if (plateExists) return BadRequest(ApiResponse<Car>.Failure("Biển số xe này đã được khách hàng khác đăng ký. Không thể đăng ký trùng biển số."));
 
             var car = new Car
             {
@@ -74,15 +92,15 @@ namespace AutoGarageManager.Controllers
             var car = await _context.Cars.FindAsync(id);
             if (car == null) return NotFound(ApiResponse<Car>.Failure("Không tìm thấy xe"));
 
-            dto.LicensePlate = dto.LicensePlate.Trim().ToUpper();
+            dto.LicensePlate = NormalizePlate(dto.LicensePlate);
             dto.Brand = dto.Brand.Trim();
             dto.Model = dto.Model.Trim();
 
             var customerExists = await _context.Customers.AnyAsync(c => c.Id == dto.CustomerId);
             if (!customerExists) return NotFound(ApiResponse<Car>.Failure("Không tìm thấy khách hàng"));
 
-            var plateExists = await _context.Cars.AnyAsync(c => c.CarId != id && c.LicensePlate == dto.LicensePlate);
-            if (plateExists) return BadRequest(ApiResponse<Car>.Failure("Biển số xe đã tồn tại"));
+            var plateExists = await _context.Cars.AnyAsync(c => c.CarId != id && c.LicensePlate.ToUpper() == dto.LicensePlate);
+            if (plateExists) return BadRequest(ApiResponse<Car>.Failure("Biển số xe này đã được khách hàng khác đăng ký. Không thể đăng ký trùng biển số."));
 
             car.LicensePlate = dto.LicensePlate;
             car.Brand = dto.Brand;
@@ -105,10 +123,18 @@ namespace AutoGarageManager.Controllers
             var hasOrder = await _context.RepairOrders.AnyAsync(o => o.CarId == id);
             if (hasOrder) return BadRequest(ApiResponse<string>.Failure("Không thể xóa xe đã có phiếu sửa"));
 
+            var hasAppointment = await _context.Appointments.AnyAsync(a => a.CarId == id && a.Status != "Đã hủy" && a.Status != "Đã từ chối");
+            if (hasAppointment) return BadRequest(ApiResponse<string>.Failure("Không thể xóa xe đang có lịch hẹn"));
+
             _context.Cars.Remove(car);
             await _context.SaveChangesAsync();
 
             return Ok(ApiResponse<string>.SuccessResponse(null, "Xóa xe thành công"));
+        }
+
+        private static string NormalizePlate(string plate)
+        {
+            return (plate ?? string.Empty).Trim().ToUpper();
         }
     }
 }

@@ -15,6 +15,7 @@ namespace AutoGarageManager.Controllers
         private const string StatusPending = "Chờ xác nhận";
         private const string StatusConfirmed = "Đã xác nhận";
         private const string StatusCancelled = "Đã hủy";
+        private const string StatusRejected = "Đã từ chối";
 
         private const string BankName = "VCB";
         private const string BankCode = "VCB";
@@ -35,6 +36,7 @@ namespace AutoGarageManager.Controllers
                 .Select(p => new
                 {
                     p.PaymentId,
+                    Id = p.PaymentId,
                     p.InvoiceId,
                     p.Amount,
                     p.PaymentMethod,
@@ -43,7 +45,12 @@ namespace AutoGarageManager.Controllers
                     p.PaymentDate,
                     p.ConfirmedAt,
                     p.ConfirmedBy,
-                    InvoiceTotal = p.Invoice != null ? p.Invoice.TotalAmount : 0
+                    InvoiceTotal = p.Invoice != null ? p.Invoice.TotalAmount : 0,
+                    InvoiceStatus = p.Invoice != null ? p.Invoice.Status : "",
+                    LocalOrderId = ExtractNoteValue(p.Note, "LOCAL_ORDER_ID"),
+                    CustomerName = ExtractNoteValue(p.Note, "CUSTOMER_NAME"),
+                    CustomerAccount = ExtractNoteValue(p.Note, "CUSTOMER_ACCOUNT"),
+                    ServiceName = ExtractNoteValue(p.Note, "SERVICE")
                 })
                 .ToListAsync();
 
@@ -74,7 +81,8 @@ namespace AutoGarageManager.Controllers
                 payment.PaymentDate,
                 payment.ConfirmedAt,
                 payment.ConfirmedBy,
-                InvoiceTotal = payment.Invoice?.TotalAmount ?? 0
+                InvoiceTotal = payment.Invoice?.TotalAmount ?? 0,
+                InvoiceStatus = payment.Invoice?.Status ?? ""
             }));
         }
 
@@ -97,7 +105,7 @@ namespace AutoGarageManager.Controllers
                 return BadRequest(ApiResponse.Failure("Hóa đơn này đã thanh toán đủ"));
 
             var content = $"THANH TOAN HD{invoice.InvoiceId}";
-            var qrUrl = $"https://img.vietqr.io/image/{BankCode}-{BankAccountNo}-compact2.png?amount={remaining:0}&addInfo={Uri.EscapeDataString(content)}&accountName={Uri.EscapeDataString(BankAccountName)}";
+            var qrUrl = BuildQrUrl(remaining, content);
 
             return Ok(ApiResponse.SuccessResponse(new
             {
@@ -187,6 +195,67 @@ namespace AutoGarageManager.Controllers
             }, message));
         }
 
+        // API cho khách bấm “Đã chuyển khoản” từ điện thoại/trang khách hàng.
+        [HttpPost("qr-request")]
+        public async Task<IActionResult> CreateQrRequest([FromBody] QrPaymentRequestDto dto)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ApiResponse.Failure("Dữ liệu thanh toán QR không hợp lệ", ModelState));
+
+            var invoice = dto.InvoiceId.HasValue
+                ? await _context.Invoices.Include(i => i.Payments).FirstOrDefaultAsync(i => i.InvoiceId == dto.InvoiceId.Value)
+                : null;
+
+            if (invoice == null)
+            {
+                invoice = await CreateTemporaryInvoice(dto);
+            }
+
+            var duplicatedPending = invoice.Payments.Any(p =>
+                p.Status == StatusPending &&
+                p.PaymentMethod.Contains("QR") &&
+                (string.IsNullOrWhiteSpace(dto.LocalOrderId) || (p.Note ?? "").Contains($"LOCAL_ORDER_ID:{dto.LocalOrderId}")));
+
+            if (duplicatedPending)
+                return BadRequest(ApiResponse.Failure("Hóa đơn này đã có thanh toán QR đang chờ Admin xác nhận"));
+
+            var note = BuildPaymentNote(dto, invoice);
+            var payment = new Payment
+            {
+                InvoiceId = invoice.InvoiceId,
+                Amount = dto.Amount,
+                PaymentMethod = "Chuyển khoản QR VCB",
+                Status = StatusPending,
+                PaymentDate = DateTime.Now,
+                ConfirmedAt = null,
+                ConfirmedBy = null,
+                Note = note
+            };
+
+            invoice.Status = "Chờ xác nhận thanh toán QR";
+            _context.Payments.Add(payment);
+            await _context.SaveChangesAsync();
+
+            var content = $"THANH TOAN {(string.IsNullOrWhiteSpace(dto.LocalOrderId) ? "HD" + invoice.InvoiceId : dto.LocalOrderId)}";
+            return Ok(ApiResponse.SuccessResponse(new
+            {
+                payment.PaymentId,
+                payment.InvoiceId,
+                payment.Amount,
+                payment.PaymentMethod,
+                payment.Status,
+                payment.PaymentDate,
+                payment.Note,
+                InvoiceStatus = invoice.Status,
+                BankName,
+                BankCode,
+                BankAccountNo,
+                BankAccountName,
+                TransferContent = content,
+                QrUrl = BuildQrUrl(payment.Amount, content)
+            }, "Đã gửi yêu cầu xác nhận thanh toán QR. Vui lòng chờ Admin/Nhân viên kiểm tra giao dịch."));
+        }
+
         [HttpPut("{id}/confirm")]
         public async Task<IActionResult> ConfirmPayment(int id, [FromBody] UpdatePaymentStatusDto? dto = null)
         {
@@ -204,19 +273,52 @@ namespace AutoGarageManager.Controllers
             if (payment.Status == StatusConfirmed)
                 return BadRequest(ApiResponse.Failure("Thanh toán này đã được xác nhận"));
 
-            if (payment.Status == StatusCancelled)
-                return BadRequest(ApiResponse.Failure("Không thể xác nhận giao dịch đã hủy"));
+            if (payment.Status == StatusCancelled || payment.Status == StatusRejected)
+                return BadRequest(ApiResponse.Failure("Không thể xác nhận giao dịch đã hủy/từ chối"));
 
             payment.Status = StatusConfirmed;
             payment.ConfirmedAt = DateTime.Now;
             payment.ConfirmedBy = string.IsNullOrWhiteSpace(dto?.ConfirmedBy) ? "Admin" : dto!.ConfirmedBy!.Trim();
-            if (!string.IsNullOrWhiteSpace(dto?.Note)) payment.Note = dto!.Note!.Trim();
+            if (!string.IsNullOrWhiteSpace(dto?.Note))
+            {
+                // Không ghi đè Note cũ, giữ LOCAL_ORDER_ID/CUSTOMER/SERVICE để điện thoại nhận đúng hóa đơn.
+                payment.Note = (payment.Note ?? "") + $"\nADMIN_NOTE:{dto!.Note!.Trim()}";
+            }
 
             if (payment.Invoice != null)
                 await UpdateInvoiceStatus(payment.Invoice);
 
             await _context.SaveChangesAsync();
             return Ok(ApiResponse.SuccessResponse(payment, "Đã xác nhận thanh toán QR thành công"));
+        }
+
+        [HttpPut("{id}/reject")]
+        public async Task<IActionResult> RejectPayment(int id, [FromBody] RejectPaymentDto dto)
+        {
+            if (dto == null || string.IsNullOrWhiteSpace(dto.Reason))
+                return BadRequest(ApiResponse.Failure("Vui lòng nhập lý do từ chối thanh toán"));
+
+            var payment = await _context.Payments
+                .Include(p => p.Invoice)
+                .ThenInclude(i => i.Payments)
+                .FirstOrDefaultAsync(p => p.PaymentId == id);
+
+            if (payment == null)
+                return NotFound(ApiResponse.Failure("Không tìm thấy thanh toán"));
+
+            if (payment.Status == StatusConfirmed)
+                return BadRequest(ApiResponse.Failure("Không thể từ chối giao dịch đã xác nhận"));
+
+            payment.Status = StatusRejected;
+            payment.ConfirmedAt = DateTime.Now;
+            payment.ConfirmedBy = string.IsNullOrWhiteSpace(dto.ConfirmedBy) ? "Admin" : dto.ConfirmedBy.Trim();
+            payment.Note = (payment.Note ?? "") + $"\nREJECT_REASON:{dto.Reason.Trim()}";
+
+            if (payment.Invoice != null)
+                await UpdateInvoiceStatus(payment.Invoice);
+
+            await _context.SaveChangesAsync();
+            return Ok(ApiResponse.SuccessResponse(payment, "Đã từ chối thanh toán QR và lưu lý do"));
         }
 
         [HttpPut("{id}/cancel")]
@@ -237,13 +339,110 @@ namespace AutoGarageManager.Controllers
                 return BadRequest(ApiResponse.Failure("Không thể hủy giao dịch đã xác nhận"));
 
             payment.Status = StatusCancelled;
-            payment.Note = string.IsNullOrWhiteSpace(dto?.Note) ? "Admin/Nhân viên hủy giao dịch" : dto!.Note!.Trim();
+            payment.Note = string.IsNullOrWhiteSpace(dto?.Note)
+                ? (payment.Note ?? "") + "\nCANCEL_REASON:Admin/Nhân viên hủy giao dịch"
+                : (payment.Note ?? "") + $"\nCANCEL_REASON:{dto!.Note!.Trim()}";
 
             if (payment.Invoice != null)
                 await UpdateInvoiceStatus(payment.Invoice);
 
             await _context.SaveChangesAsync();
             return Ok(ApiResponse.SuccessResponse(payment, "Đã hủy giao dịch thanh toán"));
+        }
+
+        private async Task<Invoice> CreateTemporaryInvoice(QrPaymentRequestDto dto)
+        {
+            var customer = await FindOrCreateCustomer(dto.CustomerName, dto.CustomerAccount, dto.CustomerEmail);
+
+            // Tạo xe hệ thống tạm nếu khách chưa có xe. Biển số có tiền tố SYS nên không trùng biển số thật.
+            var car = await _context.Cars.FirstOrDefaultAsync(c => c.CustomerId == customer.Id);
+            if (car == null)
+            {
+                var plate = $"SYS-{customer.Id}";
+                car = await _context.Cars.FirstOrDefaultAsync(c => c.LicensePlate == plate);
+                if (car == null)
+                {
+                    car = new Car
+                    {
+                        CustomerId = customer.Id,
+                        LicensePlate = plate,
+                        Brand = "Chưa cập nhật",
+                        Model = "Thanh toán QR",
+                        Year = DateTime.Now.Year
+                    };
+                    _context.Cars.Add(car);
+                    await _context.SaveChangesAsync();
+                }
+            }
+
+            var order = new RepairOrder
+            {
+                CarId = car.CarId,
+                RepairDate = DateTime.Now,
+                Status = "Hoàn thành"
+            };
+
+            _context.RepairOrders.Add(order);
+            await _context.SaveChangesAsync();
+
+            var invoice = new Invoice
+            {
+                RepairOrderId = order.RepairOrderId,
+                TotalAmount = dto.Amount,
+                Status = "Chờ xác nhận thanh toán QR",
+                CreatedAt = DateTime.Now
+            };
+
+            _context.Invoices.Add(invoice);
+            await _context.SaveChangesAsync();
+
+            return invoice;
+        }
+
+        private async Task<Customer> FindOrCreateCustomer(string? name, string? account, string? email)
+        {
+            var cleanName = string.IsNullOrWhiteSpace(name) ? "Khách hàng" : name.Trim();
+            var cleanAccount = (account ?? string.Empty).Trim();
+            var cleanEmail = (email ?? string.Empty).Trim().ToLowerInvariant();
+
+            if (string.IsNullOrWhiteSpace(cleanEmail) && cleanAccount.Contains('@'))
+                cleanEmail = cleanAccount.ToLowerInvariant();
+
+            if (string.IsNullOrWhiteSpace(cleanEmail) && !string.IsNullOrWhiteSpace(cleanAccount))
+                cleanEmail = $"{cleanAccount}@khachhang.com";
+
+            var customer = await _context.Customers.FirstOrDefaultAsync(c =>
+                (!string.IsNullOrWhiteSpace(cleanAccount) && (c.PhoneNumber == cleanAccount || c.Email == cleanAccount)) ||
+                (!string.IsNullOrWhiteSpace(cleanEmail) && c.Email == cleanEmail));
+
+            if (customer != null) return customer;
+
+            customer = new Customer
+            {
+                FullName = cleanName,
+                Email = string.IsNullOrWhiteSpace(cleanEmail) ? $"{Guid.NewGuid():N}@khachhang.com" : cleanEmail,
+                PhoneNumber = cleanAccount,
+                Address = "",
+                Password = "AUTO_CREATED"
+            };
+
+            _context.Customers.Add(customer);
+            await _context.SaveChangesAsync();
+
+            return customer;
+        }
+
+        private static string BuildPaymentNote(QrPaymentRequestDto dto, Invoice invoice)
+        {
+            var lines = new List<string>
+            {
+                $"LOCAL_ORDER_ID:{dto.LocalOrderId ?? "HD" + invoice.InvoiceId}",
+                $"CUSTOMER_NAME:{dto.CustomerName ?? "Khách hàng"}",
+                $"CUSTOMER_ACCOUNT:{dto.CustomerAccount ?? dto.CustomerEmail ?? ""}",
+                $"SERVICE:{dto.ServiceName ?? "Hóa đơn dịch vụ"}",
+                $"CLIENT_NOTE:{dto.Note ?? ""}"
+            };
+            return string.Join("\n", lines);
         }
 
         private static string? NormalizePaymentMethod(string method)
@@ -261,11 +460,40 @@ namespace AutoGarageManager.Controllers
                 .Sum(p => p.Amount);
 
             var hasPendingQr = invoice.Payments.Any(p => p.Status == StatusPending);
+            var hasRejectedOrCancelled = invoice.Payments.Any(p => p.Status == StatusRejected || p.Status == StatusCancelled);
+
             invoice.Status = confirmedAmount >= invoice.TotalAmount
                 ? "Đã thanh toán"
-                : hasPendingQr ? "Chờ xác nhận thanh toán QR" : "Chưa thanh toán";
+                : hasPendingQr ? "Chờ xác nhận thanh toán QR"
+                : hasRejectedOrCancelled ? "Thanh toán bị từ chối"
+                : "Chưa thanh toán";
 
             return Task.CompletedTask;
+        }
+
+        private static string BuildQrUrl(decimal amount, string content)
+        {
+            return $"https://img.vietqr.io/image/{BankCode}-{BankAccountNo}-compact2.png?amount={amount:0}&addInfo={Uri.EscapeDataString(content)}&accountName={Uri.EscapeDataString(BankAccountName)}";
+        }
+
+        private static string? ExtractNoteValue(string? note, string key)
+        {
+            if (string.IsNullOrWhiteSpace(note)) return null;
+
+            var lines = note.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var line in lines)
+            {
+                var idx = line.IndexOf(':');
+                if (idx <= 0) continue;
+
+                var left = line[..idx].Trim();
+                var right = line[(idx + 1)..].Trim();
+
+                if (left.Equals(key, StringComparison.OrdinalIgnoreCase))
+                    return right;
+            }
+
+            return null;
         }
     }
 }

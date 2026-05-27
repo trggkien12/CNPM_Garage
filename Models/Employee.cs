@@ -16,5 +16,8 @@ namespace AutoGarageManager.Models
 
         [StringLength(100)]
         public string Position { get; set; } = string.Empty;
+
+        [Range(0, double.MaxValue, ErrorMessage = "Lương không được âm")]
+        public decimal Salary { get; set; }
     }
 }

@@ -33,7 +33,7 @@ namespace AutoGarageManager.Controllers
                 RepairOrderId = dto.RepairOrderId,
                 ServiceId = dto.ServiceId,
                 Quantity = dto.Quantity,
-                Price = dto.Price > 0 ? dto.Price : service.Price * dto.Quantity
+                Price = service.Price * dto.Quantity
             };
 
             _context.RepairDetails.Add(detail);
@@ -80,7 +80,7 @@ namespace AutoGarageManager.Controllers
             detail.RepairOrderId = dto.RepairOrderId;
             detail.ServiceId = dto.ServiceId;
             detail.Quantity = dto.Quantity;
-            detail.Price = dto.Price > 0 ? dto.Price : service.Price * dto.Quantity;
+            detail.Price = service.Price * dto.Quantity;
 
             await _context.SaveChangesAsync();
             return Ok(ApiResponse.SuccessResponse(detail, "Cập nhật chi tiết sửa chữa thành công"));

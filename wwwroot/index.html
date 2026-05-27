@@ -228,7 +228,7 @@
             <section id="order" class="page-section"><div class="page-header"><div><h1>Hóa đơn / Lịch sử sửa chữa</h1></div><button class="btn btn-primary" onclick="openModal('order')"><i class="fa-solid fa-plus"></i> Thêm thủ công</button></div><div class="card" style="padding:0;"><table id="tbl-order"></table></div></section>
             <section id="staff" class="page-section"><div class="page-header"><div><h1>Quản lý Nhân sự</h1></div><button class="btn btn-primary" onclick="openModal('staff')"><i class="fa-solid fa-plus"></i> Thêm nhân viên</button></div><div class="card" style="padding:0;"><table id="tbl-staff"></table></div></section>
             <section id="customer" class="page-section"><div class="page-header"><div><h1>Khách hàng</h1></div><button class="btn btn-primary" onclick="openModal('customer')"><i class="fa-solid fa-plus"></i> Thêm mới</button></div><div class="card" style="padding:0;"><table id="tbl-customer"></table></div></section>
-            <section id="car" class="page-section"><div class="page-header"><div><h1>Quản lý xe</h1><p>Danh sách xe của khách hàng trong garage</p></div><button class="btn btn-primary" onclick="openModal('car')"><i class="fa-solid fa-plus"></i> Thêm xe</button></div><div class="card" style="padding:0;"><table id="tbl-car"></table></div></section>
+            <section id="car" class="page-section"><div class="page-header"><div><h1>Quản lý xe</h1><p>Danh sách xe của khách hàng trong garage</p></div><button class="btn btn-primary" onclick="openModal('car')"><i class="fa-solid fa-plus"></i> Thêm xe</button></div><div class="card" style="padding:18px; margin-bottom:14px;"><label style="display:block; font-weight:800; margin-bottom:8px; color:var(--muted);">Tìm kiếm theo biển số xe</label><input id="car-plate-search" type="text" placeholder="Nhập biển số cần tìm..." oninput="renderApp()" style="width:100%; padding:14px 16px; border:1px solid var(--border); border-radius:12px; font-size:15px;"></div><div class="card" style="padding:0;"><table id="tbl-car"></table></div></section>
             <section id="service" class="page-section"><div class="page-header"><div><h1>Dịch vụ sửa chữa</h1></div><button class="btn btn-primary" onclick="openModal('service')"><i class="fa-solid fa-plus"></i> Thêm mới</button></div><div class="card" style="padding:0;"><table id="tbl-service"></table></div></section>
             <section id="inventory" class="page-section"><div class="page-header"><div><h1>Kho phụ tùng</h1></div><button class="btn btn-primary" onclick="openModal('inventory')"><i class="fa-solid fa-plus"></i> Nhập kho</button></div><div class="card" style="padding:0;"><table id="tbl-inventory"></table></div></section>
             <section id="warranty" class="page-section"><div class="page-header"><div><h1>Bảo hành</h1></div><button class="btn btn-primary" onclick="openModal('warranty')"><i class="fa-solid fa-plus"></i> Cấp bảo hành</button></div><div class="card" style="padding:0;"><table id="tbl-warranty"></table></div></section>
@@ -348,7 +348,7 @@
                         f1: acc.name || "Khách mới", 
                         f2: acc.user, 
                         f3: "Chưa cập nhật", 
-                        f4: "Đăng ký từ Web" 
+                        f4: " " 
                     });
                 }
             });
@@ -373,26 +373,41 @@
                     });
                 }
             } catch(e) { console.log("Bỏ qua đồng bộ API C# Customers vì server không phản hồi."); }
-
             try {
                 const resCar = await fetch('/api/Cars');
                 if(resCar.ok) {
                     const jsonCars = await resCar.json();
                     let realCars = Array.isArray(jsonCars) ? jsonCars : (jsonCars.data || jsonCars.value || []);
                     realCars.forEach(c => {
-                        let code = c.code || c.Code || "Mã SP";
-                        if (!db.service.find(existing => existing.f2 === code)) {
-                            db.service.unshift({ 
-                                id: c.id || c.Id, 
-                                f1: c.name || c.Name, 
-                                f2: code, 
-                                f3: c.price || c.Price || 0, 
-                                f4: "Còn hàng" 
+                        const plate = normalizePlateText(c.licensePlate || c.LicensePlate || c.f1 || c.plate);
+                        if(!plate) return;
+                        if (!db.car.find(existing => normalizePlateText(existing.f1 || existing.plate || existing.licensePlate) === plate)) {
+                            const customerName = c.customerName || c.CustomerName || c.f2 || 'Khách hàng';
+                            const customerAccount = displayCustomerAccount(c.customerPhone || c.CustomerPhone || c.customerEmail || c.CustomerEmail || '');
+                            db.car.unshift({
+                                id: c.carId || c.CarId || c.id || c.Id || ('CAR_' + plate),
+                                f1: plate,
+                                f2: customerName,
+                                f3: `${c.brand || c.Brand || ''} ${c.model || c.Model || ''} ${c.year || c.Year || ''}`.trim(),
+                                status: c.status || c.Status || 'Đang hoạt động',
+                                customerAccount,
+                                ownerUser: normalizeUserKey(customerAccount || customerName),
+                                customerName,
+                                plate,
+                                brand: c.brand || c.Brand || '',
+                                model: c.model || c.Model || '',
+                                year: c.year || c.Year || '',
+                                apiCarId: c.carId || c.CarId || c.id || c.Id,
+                                customerId: c.customerId || c.CustomerId
                             });
                         }
                     });
                 }
             } catch(e) { console.log("Bỏ qua đồng bộ API C# Cars."); }
+
+            // Đồng bộ lịch hẹn từ SQL để Admin xác nhận sẽ lưu đúng xuống API,
+            // tránh trường hợp Admin chỉ đổi trạng thái localStorage còn khách vẫn thấy Chờ xác nhận.
+            await syncAppointmentsFromApiToAdmin();
 
             // LƯU LẠI TOÀN BỘ SỰ KẾT HỢP NÀY VÀ VẼ LÊN GIAO DIỆN
             saveDB();
@@ -402,6 +417,176 @@
         function formatMoney(num) { return isNaN(num) ? num : Number(num).toLocaleString('vi-VN') + 'đ'; }
         function normalizeUserKey(value) {
             return String(value || '').trim().toLowerCase().replace(/[^a-z0-9@._-]/g, '_');
+        }
+
+        function displayCustomerAccount(value) {
+            const raw = String(value || '').trim();
+            const fakeEmail = raw.match(/^(0\d{9,10})@khachhang\.com$/i);
+            if(fakeEmail) return fakeEmail[1];
+            return raw;
+        }
+
+        function normalizePlateText(value) {
+            return String(value || '').trim().toUpperCase();
+        }
+
+        function extractCarBrandType(car) {
+            return String(car.f3 || car.carType || car.type || `${car.brand || ''} ${car.model || ''} ${car.year || ''}`).trim() || 'Chưa cập nhật';
+        }
+
+        function refreshCustomerCarColumns() {
+            const cars = db.car || [];
+            (db.customer || []).forEach(cus => {
+                const account = String(cus.f2 || cus.customerAccount || '').trim().toLowerCase();
+                const name = String(cus.f1 || cus.customerName || '').trim().toLowerCase();
+                const ownedCars = cars.filter(car => {
+                    const carAccount = String(car.customerAccount || '').trim().toLowerCase();
+                    const carName = String(car.f2 || car.customerName || '').trim().toLowerCase();
+                    return (account && carAccount === account) || (name && carName === name);
+                });
+
+                if (ownedCars.length > 0) {
+                    cus.f3 = ownedCars.map(car => car.f1 || car.plate || car.licensePlate || '').filter(Boolean).join(', ');
+                    cus.f4 = ownedCars.map(car => extractCarBrandType(car)).filter(Boolean).join(', ');
+                } else {
+                    cus.f3 = 'Chưa có xe';
+                    cus.f4 = '';
+                }
+            });
+        }
+
+
+        function normalizeAdminText(value) {
+            return displayCustomerAccount(value || '').trim().toLowerCase().replace(/\s+/g, '');
+        }
+
+        function normalizeAdminDate(value) {
+            const raw = String(value || '').trim();
+            if(!raw) return '';
+            const d = new Date(raw);
+            if(!isNaN(d.getTime())) {
+                const yyyy = d.getFullYear();
+                const mm = String(d.getMonth() + 1).padStart(2, '0');
+                const dd = String(d.getDate()).padStart(2, '0');
+                const hh = String(d.getHours()).padStart(2, '0');
+                const mi = String(d.getMinutes()).padStart(2, '0');
+                return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+            }
+            return raw.replace('T', ' ').substring(0, 16);
+        }
+
+        function getServiceFromAppointmentNote(note) {
+            const text = String(note || '');
+            const match = text.match(/Dịch vụ:\s*([^\n]+)/i);
+            return match && match[1] ? match[1].trim() : '';
+        }
+
+        function makeBookingFromApiAppointment(a) {
+            const appId = a.appointmentId || a.AppointmentId || a.id || a.Id;
+            const customerAccount = displayCustomerAccount(a.customerAccount || a.CustomerAccount || a.customerPhone || a.CustomerPhone || a.customerEmail || a.CustomerEmail || '');
+            const customerName = a.customerName || a.CustomerName || a.fullName || a.FullName || 'Khách hàng';
+            const note = a.note || a.Note || '';
+            const service = a.serviceName || a.ServiceName || a.carService || a.CarService || getServiceFromAppointmentNote(note) || 'Dịch vụ sửa chữa';
+            const date = a.date || a.Date || a.appointmentDate || a.AppointmentDate || '';
+            return {
+                id: 'SQL_APP_' + appId,
+                appointmentId: appId,
+                ownerUser: normalizeUserKey(customerAccount || customerName),
+                customerAccount,
+                customerName,
+                customerEmail: a.customerEmail || a.CustomerEmail || '',
+                type: a.type || a.Type || service || 'Lịch hẹn dịch vụ',
+                carService: service,
+                serviceName: service,
+                date: date,
+                note: note,
+                status: a.status || a.Status || 'Chờ xác nhận',
+                rejectionReason: a.rejectionReason || a.RejectionReason || '',
+                rejectedAt: a.rejectedAt || a.RejectedAt || '',
+                createdAt: a.createdAt || a.CreatedAt || '',
+                sqlSynced: true
+            };
+        }
+
+        function getAdminBookingMatchKey(b) {
+            const account = normalizeAdminText(b.customerAccount || b.customerEmail || '');
+            const name = normalizeAdminText(b.customerName || b.f2 || '');
+            const service = normalizeAdminText(b.carService || b.serviceName || b.type || '');
+            const date = normalizeAdminDate(b.date || b.appointmentDate || '');
+            return `${account}|${name}|${service}|${date}`;
+        }
+
+        function findMatchingAdminBooking(localBooking, sqlBookings) {
+            const localKey = getAdminBookingMatchKey(localBooking);
+            let found = sqlBookings.find(sql => getAdminBookingMatchKey(sql) === localKey);
+            if(found) return found;
+
+            const localDate = normalizeAdminDate(localBooking.date || localBooking.appointmentDate || '');
+            const localAccount = normalizeAdminText(localBooking.customerAccount || localBooking.customerEmail || '');
+            const localName = normalizeAdminText(localBooking.customerName || localBooking.f2 || '');
+            return sqlBookings.find(sql => {
+                const sqlDate = normalizeAdminDate(sql.date || sql.appointmentDate || '');
+                const sqlAccount = normalizeAdminText(sql.customerAccount || sql.customerEmail || '');
+                const sqlName = normalizeAdminText(sql.customerName || sql.f2 || '');
+                return localDate && sqlDate && localDate === sqlDate && ((localAccount && sqlAccount && localAccount === sqlAccount) || (localName && sqlName && localName === sqlName));
+            });
+        }
+
+        async function syncAppointmentsFromApiToAdmin() {
+            try {
+                const res = await fetch('/api/Appointments', { cache: 'no-store' });
+                if(!res.ok) return;
+                const json = await res.json();
+                const apiAppointments = Array.isArray(json) ? json : (json.data || json.value || []);
+                const sqlBookings = apiAppointments.map(makeBookingFromApiAppointment).filter(b => b.appointmentId);
+                const merged = [];
+                const seen = new Set();
+
+                sqlBookings.forEach(sql => {
+                    const key = getAdminBookingMatchKey(sql) || String(sql.id || '');
+                    if(seen.has(key)) return;
+                    seen.add(key);
+                    merged.push(sql);
+                });
+
+                (db.booking || []).forEach(local => {
+                    const match = findMatchingAdminBooking(local, sqlBookings);
+                    if(match) {
+                        // Có bản SQL thì dùng bản SQL để trạng thái xác nhận/từ chối được đồng bộ cho khách.
+                        return;
+                    }
+                    const key = getAdminBookingMatchKey(local) || String(local.id || '');
+                    if(seen.has(key)) return;
+                    seen.add(key);
+                    merged.push(local);
+                });
+
+                db.booking = merged;
+            } catch(e) {
+                console.log('Không đồng bộ được lịch hẹn từ API', e);
+            }
+        }
+
+        async function ensureSqlAppointmentForBooking(item) {
+            let appointmentId = item.appointmentId || String(item.id || '').replace('SQL_APP_', '');
+            if(appointmentId && String(appointmentId).match(/^\d+$/)) return appointmentId;
+
+            const res = await fetch('/api/Appointments', { cache: 'no-store' });
+            const json = await res.json().catch(() => ({}));
+            if(!res.ok) throw new Error('Không đọc được lịch hẹn từ SQL');
+            const apiAppointments = Array.isArray(json) ? json : (json.data || json.value || []);
+            const sqlBookings = apiAppointments.map(makeBookingFromApiAppointment);
+            const match = findMatchingAdminBooking(item, sqlBookings);
+            if(!match || !match.appointmentId) {
+                throw new Error('Không tìm thấy lịch hẹn tương ứng trong SQL. Hãy tải lại trang Admin rồi thử xác nhận lại.');
+            }
+            item.appointmentId = match.appointmentId;
+            item.id = match.id;
+            item.sqlSynced = true;
+            return match.appointmentId;
+        }
+        function cleanCustomerAccount(value) {
+            return displayCustomerAccount(value);
         }
         function findCustomerByNameOrAccount(value) {
             const v = String(value || '').trim().toLowerCase();
@@ -430,6 +615,26 @@
         }
         function setText(id, value) { const el = document.getElementById(id); if(el) el.innerText = value; }
         function setHTML(id, value) { const el = document.getElementById(id); if(el) el.innerHTML = value; }
+
+
+        async function syncDashboardFromApi() {
+            try {
+                const res = await fetch('/api/Statistics/dashboard', { cache: 'no-store' });
+                if(!res.ok) return;
+                const json = await res.json();
+                const s = json.data || json;
+                setText('dash-cus', s.totalCustomers ?? s.TotalCustomers ?? db.customer.length);
+                setText('dash-order', s.totalOrders ?? s.TotalOrders ?? db.order.length);
+                setText('dash-rev', formatMoney(s.totalRevenue ?? s.TotalRevenue ?? s.totalConfirmedPaidAmount ?? s.TotalConfirmedPaidAmount ?? db.revenue));
+                setText('dash-pending-qr', s.pendingQrInvoices ?? s.PendingQrInvoices ?? 0);
+                setText('dash-booking', s.totalPendingAppointments ?? s.TotalPendingAppointments ?? 0);
+                setText('dash-service', s.totalServices ?? s.TotalServices ?? db.service.length);
+                setText('dash-low-stock', s.lowStockParts ?? s.LowStockParts ?? 0);
+                setText('nav-badge-booking', s.totalPendingAppointments ?? s.TotalPendingAppointments ?? 0);
+            } catch(e) {
+                console.log('Không đồng bộ được dashboard API', e);
+            }
+        }
 
         function renderDashboard() {
             const orders = db.order || [];
@@ -483,6 +688,7 @@
         }
 
         function renderApp() {
+            refreshCustomerCarColumns();
             renderDashboard();
 
             for(let type in schema) {
@@ -493,11 +699,16 @@
                 let thead = `<thead><tr>` + sc.cols.map(c => `<th>${c}</th>`).join('') + `<th style="text-align:right;">Thao tác</th></tr></thead>`;
                 
                 let dataToRender = [...db[type]];
+                if (type === 'car') {
+                    const kw = String(document.getElementById('car-plate-search')?.value || '').trim().toLowerCase();
+                    if (kw) dataToRender = dataToRender.filter(row => String(row.f1 || row.plate || '').toLowerCase().includes(kw));
+                }
 
                 let tbody = `<tbody>` + dataToRender.map(row => {
                     let tdHtml = '';
                     sc.fields.forEach((fieldKey, idx) => {
                         let val = row[fieldKey] || '';
+                        if(fieldKey === 'customerAccount') val = displayCustomerAccount(val);
                         if(idx === 0) {
                             tdHtml += `<td><strong>${val}</strong></td>`;
                         } else if (fieldKey === 'f3' && (type === 'service' || type === 'order')) {
@@ -517,6 +728,9 @@
                     }
                     if(type === 'booking' && (row.status || '').includes('Chờ')) {
                         rejectBtn = `<button class="btn btn-danger btn-sm" title="Từ chối lịch hẹn" onclick="rejectBooking('${row.id}')"><i class="fa-solid fa-xmark"></i></button>`;
+                    }
+                    if(type === 'order' && (row.status || '').includes('Chờ')) {
+                        rejectBtn = `<button class="btn btn-danger btn-sm" title="Từ chối thanh toán QR" onclick="rejectOrder('${row.id}')"><i class="fa-solid fa-xmark"></i></button>`;
                     }
 
                     return `
@@ -586,16 +800,16 @@
 
         function closeModal() { document.getElementById('mainModal').classList.remove('active'); }
 
-        function saveData() {
+        async function saveData() {
             let type = document.getElementById('entityType').value;
             let id = document.getElementById('entityId').value;
             let sc = schema[type];
-            
+
             let firstInput = document.getElementById('inp-' + sc.fields[0]).value;
             if(!firstInput) return alert("Vui lòng nhập thông tin cho trường đầu tiên!");
 
             let newItem = { id: id ? id : 'ID_' + Date.now() };
-            
+
             if(id) {
                 let existing = db[type].find(x => String(x.id) === String(id));
                 if(existing) newItem = {...existing}; 
@@ -608,14 +822,112 @@
                 newItem[fieldKey] = document.getElementById('inp-' + fieldKey).value;
             });
 
+            try {
+                if(type === 'customer') {
+                    const body = {
+                        fullName: newItem.f1,
+                        phoneNumber: displayCustomerAccount(newItem.f2 || ''),
+                        email: (String(newItem.f2 || '').includes('@') ? newItem.f2 : `${displayCustomerAccount(newItem.f2 || '')}@khachhang.com`),
+                        address: '',
+                        password: '123456'
+                    };
+                    if(id && String(id).match(/^\d+$/)) {
+                        await fetch(`/api/Customers/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+                    } else {
+                        const res = await fetch('/api/Customers', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+                        const json = await res.json().catch(()=>({}));
+                        if(!res.ok || json.success === false) throw new Error(json.message || 'Không lưu được khách hàng lên SQL');
+                        const created = json.data || json;
+                        newItem.id = created.id || created.Id || newItem.id;
+                    }
+                }
+
+                if(type === 'service') {
+                    const body = {
+                        serviceName: newItem.f1,
+                        serviceCode: newItem.f2 || newItem.id,
+                        price: Number(String(newItem.f3 || 0).replace(/[^0-9]/g,'')) || 0,
+                        description: newItem.f4 || ''
+                    };
+                    const apiId = newItem.apiServiceId || (String(id).match(/^\d+$/) ? id : null);
+                    const res = await fetch(apiId ? `/api/Services/${apiId}` : '/api/Services', {
+                        method: apiId ? 'PUT' : 'POST',
+                        headers:{'Content-Type':'application/json'},
+                        body:JSON.stringify(body)
+                    });
+                    const json = await res.json().catch(()=>({}));
+                    if(!res.ok || json.success === false) throw new Error(json.message || 'Không lưu được dịch vụ lên SQL');
+                    const saved = json.data || json;
+                    newItem.apiServiceId = saved.serviceId || saved.ServiceId || saved.id || saved.Id || apiId;
+                    newItem.id = newItem.apiServiceId || newItem.id;
+                }
+
+                if(type === 'car') {
+                    newItem.f1 = normalizePlateText(newItem.f1);
+                    const duplicatePlate = (db.car || []).find(c => String(c.id) !== String(id) && normalizePlateText(c.f1 || c.plate || c.licensePlate) === normalizePlateText(newItem.f1));
+                    if(duplicatePlate) return alert('Biển số xe này đã được khách hàng khác đăng ký. Không thể lưu trùng biển số.');
+
+                    const customer = findCustomerByNameOrAccount(newItem.f2);
+                    if(!customer) return alert('Không tìm thấy khách hàng để gán xe. Hãy thêm khách hàng trước.');
+                    const customerId = customer.apiCustomerId || customer.id;
+                    if(!customerId || !String(customerId).match(/^\d+$/)) return alert('Khách hàng chưa có mã SQL hợp lệ. Hãy lưu khách hàng lên SQL trước.');
+
+                    const parts = String(newItem.f3 || '').trim().split(/\s+/);
+                    const body = {
+                        licensePlate: newItem.f1,
+                        brand: parts[0] || 'Chưa cập nhật',
+                        model: parts.slice(1, -1).join(' ') || parts.slice(1).join(' ') || 'Chưa cập nhật',
+                        year: Number(parts[parts.length - 1]) || new Date().getFullYear(),
+                        customerId: Number(customerId)
+                    };
+                    const apiId = newItem.apiCarId || (String(id).match(/^\d+$/) ? id : null);
+                    const res = await fetch(apiId ? `/api/Cars/${apiId}` : '/api/Cars', {
+                        method: apiId ? 'PUT' : 'POST',
+                        headers:{'Content-Type':'application/json'},
+                        body:JSON.stringify(body)
+                    });
+                    const json = await res.json().catch(()=>({}));
+                    if(!res.ok || json.success === false) throw new Error(json.message || 'Không lưu được xe lên SQL');
+                    const saved = json.data || json;
+                    newItem.apiCarId = saved.carId || saved.CarId || saved.id || saved.Id || apiId;
+                    newItem.id = newItem.apiCarId || newItem.id;
+                    newItem.customerAccount = customer.f2 || customer.customerAccount || '';
+                    newItem.ownerUser = normalizeUserKey(newItem.customerAccount || customer.f1);
+                    newItem.customerName = customer.f1;
+                }
+
+                if(type === 'booking') {
+                    if(newItem.status === 'Đã từ chối' && !String(newItem.rejectionReason || '').trim()) {
+                        return alert('Lịch hẹn bị từ chối cần có lý do từ chối.');
+                    }
+                    if(!id) {
+                        const customer = findCustomerByNameOrAccount(newItem.customerName || newItem.f2 || '');
+                        const customerId = customer && (customer.apiCustomerId || customer.id);
+                        if(customerId && String(customerId).match(/^\d+$/)) {
+                            const date = new Date(newItem.date || new Date(Date.now()+86400000)).toISOString();
+                            const res = await fetch('/api/Appointments', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ customerId:Number(customerId), appointmentDate:date, note:newItem.type || '' }) });
+                            const json = await res.json().catch(()=>({}));
+                            if(!res.ok || json.success === false) throw new Error(json.message || 'Không lưu được lịch hẹn lên SQL');
+                            const saved = json.data || json;
+                            newItem.appointmentId = saved.appointmentId || saved.AppointmentId;
+                            newItem.id = 'SQL_APP_' + newItem.appointmentId;
+                        }
+                    }
+                }
+            } catch(e) {
+                alert(e.message || 'Không lưu được dữ liệu lên SQL/API.');
+                return;
+            }
+
             if(type === 'order') {
                 const customer = findCustomerByNameOrAccount(newItem.customerAccount || newItem.f2);
                 if(customer) {
                     newItem.f2 = customer.f1 || newItem.f2;
-                    newItem.customerAccount = customer.f2 || customer.customerAccount || newItem.customerAccount;
+                    newItem.customerAccount = cleanCustomerAccount(customer.f2 || customer.customerAccount || newItem.customerAccount);
                     newItem.ownerUser = normalizeUserKey(newItem.customerAccount || newItem.f2);
                     newItem.customerName = newItem.f2;
                 } else if(newItem.customerAccount) {
+                    newItem.customerAccount = cleanCustomerAccount(newItem.customerAccount);
                     newItem.ownerUser = normalizeUserKey(newItem.customerAccount);
                     newItem.customerName = newItem.f2;
                 } else {
@@ -623,34 +935,65 @@
                 }
             }
 
-            if(type === 'car') {
-                const customer = findCustomerByNameOrAccount(newItem.f2);
-                if(customer) {
-                    newItem.customerAccount = customer.f2 || customer.customerAccount || '';
-                    newItem.ownerUser = normalizeUserKey(newItem.customerAccount || customer.f1);
-                    newItem.customerName = customer.f1;
-                }
-            }
-
-            if(type === 'booking' && newItem.status === 'Đã từ chối' && !String(newItem.rejectionReason || '').trim()) {
-                return alert('Lịch hẹn bị từ chối cần có lý do từ chối.');
-            }
-
             if (id) {
                 let index = db[type].findIndex(x => String(x.id) === String(id));
-                db[type][index] = newItem;
+                if(index >= 0) db[type][index] = newItem;
+                else db[type].unshift(newItem);
             } else {
                 db[type].unshift(newItem); 
             }
 
-            saveDB(); renderApp(); closeModal();
+            saveDB();
+            await initData();
+            closeModal();
         }
 
-        function deleteData(type, id) {
-            if (confirm("Xác nhận xóa dữ liệu này vĩnh viễn?")) {
-                db[type] = db[type].filter(x => String(x.id) !== String(id));
-                saveDB(); renderApp();
+        async function deleteData(type, id) {
+            if (!confirm("Xác nhận xóa dữ liệu này vĩnh viễn?")) return;
+
+            try {
+                if(type === 'car') {
+                    const item = db.car.find(x => String(x.id) === String(id));
+                    const apiId = item && (item.apiCarId || (String(id).match(/^\d+$/) ? id : null));
+                    if(apiId) {
+                        const res = await fetch(`/api/Cars/${apiId}`, { method:'DELETE' });
+                        const json = await res.json().catch(()=>({}));
+                        if(!res.ok || json.success === false) throw new Error(json.message || 'Không thể xóa xe trên SQL');
+                    }
+                }
+                if(type === 'service') {
+                    const item = db.service.find(x => String(x.id) === String(id));
+                    const apiId = item && (item.apiServiceId || (String(id).match(/^\d+$/) ? id : null));
+                    if(apiId) {
+                        const res = await fetch(`/api/Services/${apiId}`, { method:'DELETE' });
+                        const json = await res.json().catch(()=>({}));
+                        if(!res.ok || json.success === false) throw new Error(json.message || 'Không thể xóa dịch vụ trên SQL');
+                    }
+                }
+                if(type === 'customer') {
+                    if(String(id).match(/^\d+$/)) {
+                        const res = await fetch(`/api/Customers/${id}`, { method:'DELETE' });
+                        const json = await res.json().catch(()=>({}));
+                        if(!res.ok || json.success === false) throw new Error(json.message || 'Không thể xóa khách hàng trên SQL');
+                    }
+                }
+                if(type === 'booking') {
+                    const item = db.booking.find(x => String(x.id) === String(id));
+                    const apiId = item && (item.appointmentId || String(id).replace('SQL_APP_',''));
+                    if(apiId && String(apiId).match(/^\d+$/)) {
+                        const res = await fetch(`/api/Appointments/${apiId}`, { method:'DELETE' });
+                        const json = await res.json().catch(()=>({}));
+                        if(!res.ok || json.success === false) throw new Error(json.message || 'Không thể hủy lịch hẹn trên SQL');
+                    }
+                }
+            } catch(e) {
+                alert(e.message || 'Không thể xóa dữ liệu do ràng buộc SQL.');
+                return;
             }
+
+            db[type] = db[type].filter(x => String(x.id) !== String(id));
+            saveDB();
+            await initData();
         }
 
         function extractMoneyFromText(text) {
@@ -673,7 +1016,7 @@
                 id: 'HD' + Math.floor(Math.random() * 1000000),
                 bookingId: booking.id,
                 ownerUser: booking.ownerUser || booking.customerAccount || booking.customerEmail || '',
-                customerAccount: booking.customerAccount || booking.customerEmail || booking.ownerUser || '',
+                customerAccount: cleanCustomerAccount(booking.customerAccount || booking.customerEmail || booking.ownerUser || ''),
                 customerName: booking.customerName || booking.f2 || 'Khách hàng',
                 f1: 'Hóa đơn tạm tính: ' + (booking.carService || booking.type || 'Dịch vụ sửa chữa'),
                 f2: booking.customerName || booking.f2 || 'Khách hàng',
@@ -690,39 +1033,126 @@
             return invoice;
         }
 
-        function approveItem(type, id) {
+        async function approveItem(type, id) {
             let item = db[type].find(x => String(x.id) === String(id));
-            if(item) {
+            if(!item) return;
+
+            try {
                 if(type === 'order') {
+                    const paymentId = item.paymentId || item.latestPaymentId || item.LatestPaymentId;
+                    const invoiceId = item.invoiceId || item.InvoiceId;
+                    if(paymentId) {
+                        const res = await fetch(`/api/Payments/${paymentId}/confirm`, {
+                            method:'PUT',
+                            headers:{'Content-Type':'application/json'},
+                            body:JSON.stringify({ confirmedBy:'Admin', note:'Admin xác nhận thanh toán QR' })
+                        });
+                        const json = await res.json().catch(()=>({}));
+                        if(!res.ok || json.success === false) throw new Error(json.message || 'Không xác nhận được thanh toán');
+                    } else if(invoiceId) {
+                        const res = await fetch(`/api/Invoices/${invoiceId}/confirm-payment`, { method:'PUT' });
+                        const json = await res.json().catch(()=>({}));
+                        if(!res.ok || json.success === false) throw new Error(json.message || 'Không xác nhận được hóa đơn');
+                    }
                     item.status = "Đã xác nhận / Hoàn tất";
                     item.paymentStatus = 'Đã được Admin/Nhân viên xác nhận thanh toán';
                     item.paidAt = new Date().toLocaleString('vi-VN');
                 } else if(type === 'booking') {
+                    const appointmentId = await ensureSqlAppointmentForBooking(item);
+                    const res = await fetch(`/api/Appointments/${appointmentId}/approve`, { method:'PUT' });
+                    const json = await res.json().catch(()=>({}));
+                    if(!res.ok || json.success === false) throw new Error(json.message || 'Không xác nhận được lịch hẹn');
+
                     item.status = "Đã xác nhận / Hoàn tất";
                     item.rejectionReason = '';
                     item.approvedAt = new Date().toLocaleString('vi-VN');
+                    item.appointmentId = appointmentId;
+                    item.id = 'SQL_APP_' + appointmentId;
+                    item.sqlSynced = true;
                     createInvoiceFromBooking(item);
-                    alert('Đã xác nhận lịch hẹn và tạo hóa đơn tạm tính cho khách hàng.');
+                    alert('Đã xác nhận lịch hẹn và lưu trạng thái lên SQL. Khách hàng tải lại sẽ thấy Đã xác nhận / Hoàn tất.');
                 } else {
                     item.status = "Đã xác nhận / Hoàn tất";
                 }
-                saveDB(); renderApp();
+
+                saveDB();
+                await initData();
+            } catch(e) {
+                alert(e.message || 'Không thể xác nhận dữ liệu trên SQL/API.');
             }
         }
 
-        function rejectBooking(id) {
+        async function rejectBooking(id) {
             const item = db.booking.find(x => String(x.id) === String(id));
             if(!item) return alert('Không tìm thấy lịch hẹn cần từ chối!');
             const reason = prompt('Nhập lý do từ chối lịch hẹn này:');
             if(reason === null) return;
             const cleanReason = reason.trim();
             if(!cleanReason) return alert('Bạn phải nhập lý do từ chối để khách hàng biết nguyên nhân.');
-            item.status = 'Đã từ chối';
-            item.rejectionReason = cleanReason;
-            item.rejectedAt = new Date().toLocaleString('vi-VN');
-            saveDB();
-            renderApp();
-            alert('Đã từ chối lịch hẹn và lưu lý do cho khách hàng.');
+
+            try {
+                const appointmentId = await ensureSqlAppointmentForBooking(item);
+                const res = await fetch(`/api/Appointments/${appointmentId}/reject`, {
+                    method:'PUT',
+                    headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({ reason: cleanReason, confirmedBy:'Admin' })
+                });
+                const json = await res.json().catch(()=>({}));
+                if(!res.ok || json.success === false) throw new Error(json.message || 'Không từ chối được lịch hẹn');
+
+                item.appointmentId = appointmentId;
+                item.id = 'SQL_APP_' + appointmentId;
+                item.sqlSynced = true;
+                item.status = 'Đã từ chối';
+                item.rejectionReason = cleanReason;
+                item.rejectedAt = new Date().toLocaleString('vi-VN');
+                saveDB();
+                await initData();
+                alert('Đã từ chối lịch hẹn và lưu lý do cho khách hàng.');
+            } catch(e) {
+                alert(e.message || 'Không thể từ chối lịch hẹn trên SQL/API.');
+            }
+        }
+
+        async function rejectOrder(id) {
+            const item = db.order.find(x => String(x.id) === String(id));
+            if(!item) return alert('Không tìm thấy hóa đơn cần từ chối!');
+            const reason = prompt('Nhập lý do từ chối thanh toán QR:');
+            if(reason === null) return;
+            const cleanReason = reason.trim();
+            if(!cleanReason) return alert('Bạn phải nhập lý do từ chối để khách hàng biết nguyên nhân.');
+
+            try {
+                const paymentId = item.paymentId || item.latestPaymentId || item.LatestPaymentId;
+                const invoiceId = item.invoiceId || item.InvoiceId;
+                if(paymentId) {
+                    const res = await fetch(`/api/Payments/${paymentId}/reject`, {
+                        method:'PUT',
+                        headers:{'Content-Type':'application/json'},
+                        body:JSON.stringify({ reason: cleanReason, confirmedBy:'Admin' })
+                    });
+                    const json = await res.json().catch(()=>({}));
+                    if(!res.ok || json.success === false) throw new Error(json.message || 'Không từ chối được thanh toán');
+                } else if(invoiceId) {
+                    const res = await fetch(`/api/Invoices/${invoiceId}/reject-payment`, {
+                        method:'PUT',
+                        headers:{'Content-Type':'application/json'},
+                        body:JSON.stringify({ reason: cleanReason, confirmedBy:'Admin' })
+                    });
+                    const json = await res.json().catch(()=>({}));
+                    if(!res.ok || json.success === false) throw new Error(json.message || 'Không từ chối được hóa đơn');
+                }
+
+                item.status = 'Đã từ chối';
+                item.paymentStatus = 'Admin/Nhân viên từ chối thanh toán QR';
+                item.rejectionReason = cleanReason;
+                item.rejectedAt = new Date().toLocaleString('vi-VN');
+                saveDB();
+                await initData();
+                alert('Đã từ chối thanh toán QR và lưu lý do cho khách hàng.');
+            } catch(e) {
+                alert(e.message || 'Không thể từ chối thanh toán trên SQL/API.');
+            }
         }
 
         // BÁN HÀNG POS
@@ -792,6 +1222,281 @@
                 window.location.href = 'login.html';
             }
         }
+
+
+        /* =========================================================
+           FIX CRUD SQL: KHO - NHÂN SỰ - BẢO HÀNH - NHÀ CUNG CẤP
+           Giữ code cũ, chỉ vá 4 phần này để sửa/xóa đúng SQL.
+        ========================================================= */
+
+        function normalizeCrudNumber(value) {
+            const n = Number(String(value || '').replace(/[^0-9.-]/g, ''));
+            return isNaN(n) ? 0 : n;
+        }
+
+        async function crudFetchJson(url, options = {}) {
+            const res = await fetch(url, {
+                cache: 'no-store',
+                ...options,
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(options.headers || {})
+                }
+            });
+
+            const json = await res.json().catch(() => ({}));
+
+            if (!res.ok || json.success === false) {
+                throw new Error(json.message || json.error || ('API lỗi: ' + url));
+            }
+
+            return json.data || json;
+        }
+
+        function getSqlId(item, type) {
+            if (!item) return null;
+
+            if (type === 'inventory') return item.apiSparePartId || item.sparePartId || item.SparePartId || item.id || item.Id;
+            if (type === 'staff') return item.apiEmployeeId || item.employeeId || item.EmployeeId || item.id || item.Id;
+            if (type === 'supplier') return item.apiSupplierId || item.supplierId || item.SupplierId || item.id || item.Id;
+            if (type === 'warranty') return item.apiWarrantyId || item.warrantyId || item.WarrantyId || item.id || item.Id;
+
+            return item.id || item.Id;
+        }
+
+        function mapCrudSparePart(p) {
+            const id = p.id || p.Id || p.sparePartId || p.SparePartId;
+            return {
+                id: id,
+                apiSparePartId: id,
+                f1: p.name || p.Name || 'Phụ tùng',
+                f2: p.code || p.Code || '',
+                f3: p.stockQuantity ?? p.StockQuantity ?? p.quantity ?? p.Quantity ?? 0,
+                f4: p.location || p.Location || '',
+                f5: p.price ?? p.Price ?? 0
+            };
+        }
+
+        function mapCrudEmployee(e) {
+            const id = e.id || e.Id || e.employeeId || e.EmployeeId;
+            return {
+                id: id,
+                apiEmployeeId: id,
+                f1: e.name || e.Name || e.fullName || e.FullName || 'Nhân viên',
+                f2: e.position || e.Position || 'Nhân viên',
+                f3: e.phone || e.Phone || e.phoneNumber || e.PhoneNumber || '',
+                f4: e.salary ?? e.Salary ?? 0
+            };
+        }
+
+        function mapCrudSupplier(s) {
+            const id = s.id || s.Id || s.supplierId || s.SupplierId;
+            return {
+                id: id,
+                apiSupplierId: id,
+                f1: s.name || s.Name || 'Nhà cung cấp',
+                f2: s.phone || s.Phone || '',
+                f3: s.address || s.Address || '',
+                f4: s.status || s.Status || 'Hoạt động'
+            };
+        }
+
+        function mapCrudWarranty(w) {
+            const id = w.id || w.Id || w.warrantyId || w.WarrantyId;
+            return {
+                id: id,
+                apiWarrantyId: id,
+                f1: w.serviceName || w.ServiceName || w.name || w.Name || 'Dịch vụ bảo hành',
+                f2: w.customerName || w.CustomerName || '',
+                f3: w.purchaseDate || w.PurchaseDate || '',
+                f4: w.expiryDate || w.ExpiryDate || ''
+            };
+        }
+
+        async function loadCrudSqlSections() {
+            // Cho giao diện kho khớp SQL hơn: thêm cột Giá
+            if (schema.inventory && !schema.inventory.fields.includes('f5')) {
+                schema.inventory.cols = ['Tên Phụ Tùng', 'Mã SP', 'Giá', 'Tồn kho', 'Vị trí'];
+                schema.inventory.fields = ['f1', 'f2', 'f5', 'f3', 'f4'];
+            }
+
+            try {
+                const data = await crudFetchJson('/api/SpareParts');
+                const list = Array.isArray(data) ? data : (Array.isArray(data.data) ? data.data : []);
+                db.inventory = list.map(mapCrudSparePart);
+            } catch (e) {
+                console.warn('Không đọc được kho từ SQL:', e);
+            }
+
+            try {
+                const data = await crudFetchJson('/api/Employees');
+                const list = Array.isArray(data) ? data : (Array.isArray(data.data) ? data.data : []);
+                db.staff = list.map(mapCrudEmployee);
+            } catch (e) {
+                console.warn('Không đọc được nhân sự từ SQL:', e);
+            }
+
+            try {
+                const data = await crudFetchJson('/api/Suppliers');
+                const list = Array.isArray(data) ? data : (Array.isArray(data.data) ? data.data : []);
+                db.supplier = list.map(mapCrudSupplier);
+            } catch (e) {
+                console.warn('Không đọc được nhà cung cấp từ SQL:', e);
+            }
+
+            try {
+                const data = await crudFetchJson('/api/Warranties');
+                const list = Array.isArray(data) ? data : (Array.isArray(data.data) ? data.data : []);
+                db.warranty = list.map(mapCrudWarranty);
+            } catch (e) {
+                console.warn('Không đọc được bảo hành từ SQL:', e);
+            }
+        }
+
+        function buildCrudBody(type, newItem) {
+            if (type === 'inventory') {
+                return {
+                    name: newItem.f1 || '',
+                    code: newItem.f2 || '',
+                    price: normalizeCrudNumber(newItem.f5),
+                    stockQuantity: normalizeCrudNumber(newItem.f3),
+                    location: newItem.f4 || ''
+                };
+            }
+
+            if (type === 'staff') {
+                return {
+                    name: newItem.f1 || '',
+                    position: newItem.f2 || 'Nhân viên',
+                    phone: newItem.f3 || '',
+                    salary: normalizeCrudNumber(newItem.f4)
+                };
+            }
+
+            if (type === 'supplier') {
+                return {
+                    name: newItem.f1 || '',
+                    phone: newItem.f2 || '',
+                    address: newItem.f3 || '',
+                    status: newItem.f4 || 'Hoạt động'
+                };
+            }
+
+            if (type === 'warranty') {
+                return {
+                    serviceName: newItem.f1 || '',
+                    customerName: newItem.f2 || '',
+                    purchaseDate: newItem.f3 || '',
+                    expiryDate: newItem.f4 || ''
+                };
+            }
+
+            return {};
+        }
+
+        function getCrudEndpoint(type) {
+            if (type === 'inventory') return '/api/SpareParts';
+            if (type === 'staff') return '/api/Employees';
+            if (type === 'supplier') return '/api/Suppliers';
+            if (type === 'warranty') return '/api/Warranties';
+            return '';
+        }
+
+        function getCrudMapper(type) {
+            if (type === 'inventory') return mapCrudSparePart;
+            if (type === 'staff') return mapCrudEmployee;
+            if (type === 'supplier') return mapCrudSupplier;
+            if (type === 'warranty') return mapCrudWarranty;
+            return x => x;
+        }
+
+        const __oldInitDataBeforeCrudFix = initData;
+        initData = async function() {
+            await __oldInitDataBeforeCrudFix();
+            await loadCrudSqlSections();
+            renderApp();
+        };
+
+        const __oldSaveDataBeforeCrudFix = saveData;
+        saveData = async function() {
+            const type = document.getElementById('entityType').value;
+
+            if (!['inventory', 'staff', 'supplier', 'warranty'].includes(type)) {
+                return __oldSaveDataBeforeCrudFix();
+            }
+
+            const id = document.getElementById('entityId').value;
+            const sc = schema[type];
+            const oldItem = id ? (db[type] || []).find(x => String(x.id) === String(id)) : null;
+
+            let newItem = oldItem ? { ...oldItem } : { id: 'ID_' + Date.now() };
+
+            const firstInput = document.getElementById('inp-' + sc.fields[0])?.value || '';
+            if (!firstInput.trim()) {
+                alert('Vui lòng nhập thông tin cho trường đầu tiên!');
+                return;
+            }
+
+            sc.fields.forEach(fieldKey => {
+                const el = document.getElementById('inp-' + fieldKey);
+                if (el) newItem[fieldKey] = el.value;
+            });
+
+            const endpoint = getCrudEndpoint(type);
+            const body = buildCrudBody(type, newItem);
+            const apiId = oldItem ? getSqlId(oldItem, type) : null;
+
+            try {
+                const saved = await crudFetchJson(apiId ? `${endpoint}/${apiId}` : endpoint, {
+                    method: apiId ? 'PUT' : 'POST',
+                    body: JSON.stringify(body)
+                });
+
+                const mapper = getCrudMapper(type);
+                const mapped = mapper(saved);
+
+                if (apiId) {
+                    const idx = db[type].findIndex(x => String(x.id) === String(id));
+                    if (idx >= 0) db[type][idx] = mapped;
+                } else {
+                    db[type].unshift(mapped);
+                }
+
+                await loadCrudSqlSections();
+                renderApp();
+                closeModal();
+            } catch (e) {
+                alert(e.message || 'Không lưu được dữ liệu lên SQL/API.');
+            }
+        };
+
+        const __oldDeleteDataBeforeCrudFix = deleteData;
+        deleteData = async function(type, id) {
+            if (!['inventory', 'staff', 'supplier', 'warranty'].includes(type)) {
+                return __oldDeleteDataBeforeCrudFix(type, id);
+            }
+
+            if (!confirm('Xác nhận xóa dữ liệu này vĩnh viễn?')) return;
+
+            const item = (db[type] || []).find(x => String(x.id) === String(id));
+            const apiId = getSqlId(item, type);
+
+            if (!apiId || !String(apiId).match(/^\d+$/)) {
+                alert('Không tìm thấy ID SQL để xóa. Hãy bấm Ctrl + F5 rồi thử lại.');
+                return;
+            }
+
+            const endpoint = getCrudEndpoint(type);
+
+            try {
+                await crudFetchJson(`${endpoint}/${apiId}`, { method: 'DELETE' });
+                await loadCrudSqlSections();
+                renderApp();
+            } catch (e) {
+                alert(e.message || 'Không thể xóa dữ liệu do ràng buộc SQL.');
+            }
+        };
+
 
         // Khởi động chạy hàm ĐỒNG BỘ SIÊU CẤP 1 lần duy nhất, sau đó mới vẽ UI
         window.onload = () => {

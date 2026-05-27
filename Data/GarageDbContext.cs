@@ -69,6 +69,7 @@ namespace AutoGarageManager.Data
             // Add indexes for commonly searched columns
             modelBuilder.Entity<Car>()
                 .HasIndex(c => c.LicensePlate)
+                .IsUnique()
                 .HasDatabaseName("idx_cars_license_plate");
 
             modelBuilder.Entity<Customer>()

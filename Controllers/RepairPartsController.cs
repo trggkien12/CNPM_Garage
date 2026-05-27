@@ -62,7 +62,7 @@ namespace AutoGarageManager.Controllers
             if (sparePart.StockQuantity < repairPart.Quantity) return BadRequest(ApiResponse.Failure("Không đủ số lượng phụ tùng trong kho"));
 
             repairPart.Id = 0;
-            repairPart.UnitPrice = repairPart.UnitPrice > 0 ? repairPart.UnitPrice : sparePart.Price;
+            repairPart.UnitPrice = sparePart.Price;
             repairPart.TotalPrice = repairPart.Quantity * repairPart.UnitPrice;
             sparePart.StockQuantity -= repairPart.Quantity;
 
@@ -96,7 +96,7 @@ namespace AutoGarageManager.Controllers
             repairPart.RepairOrderId = input.RepairOrderId;
             repairPart.SparePartId = input.SparePartId;
             repairPart.Quantity = input.Quantity;
-            repairPart.UnitPrice = input.UnitPrice > 0 ? input.UnitPrice : newSparePart.Price;
+            repairPart.UnitPrice = newSparePart.Price;
             repairPart.TotalPrice = input.Quantity * repairPart.UnitPrice;
             await _context.SaveChangesAsync();
 

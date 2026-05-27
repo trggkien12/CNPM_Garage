@@ -11,10 +11,16 @@ namespace AutoGarageManager.Models
         [StringLength(150)]
         public string Name { get; set; } = string.Empty;
 
+        [StringLength(50)]
+        public string Code { get; set; } = string.Empty;
+
         [Range(0, double.MaxValue, ErrorMessage = "Giá phụ tùng không được âm")]
         public decimal Price { get; set; }
 
         [Range(0, int.MaxValue, ErrorMessage = "Số lượng tồn không được âm")]
         public int StockQuantity { get; set; }
+
+        [StringLength(150)]
+        public string Location { get; set; } = string.Empty;
     }
 }

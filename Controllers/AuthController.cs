@@ -5,6 +5,7 @@ using AutoGarageManager.Models;
 using AutoGarageManager.DTOs;
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
 
 namespace AutoGarageManager.Controllers
 {
@@ -41,7 +42,7 @@ namespace AutoGarageManager.Controllers
                 Email = request.Email,
                 PhoneNumber = request.PhoneNumber,
                 Address = request.Address,
-                Password = request.Password
+                Password = HashPassword(request.Password)
             };
 
             _context.Customers.Add(newCustomer);
@@ -98,15 +99,22 @@ namespace AutoGarageManager.Controllers
             }
 
             var customer = await _context.Customers
-                .FirstOrDefaultAsync(c => (c.Email == username || c.PhoneNumber == username) && c.Password == password);
+                .FirstOrDefaultAsync(c => c.Email == username || c.PhoneNumber == username);
 
-            if (customer != null)
+            if (customer != null && VerifyPassword(password, customer.Password))
             {
+                // Nếu là mật khẩu cũ dạng plain text, nâng cấp sang PBKDF2 sau khi đăng nhập thành công.
+                if (!IsHashedPassword(customer.Password))
+                {
+                    customer.Password = HashPassword(password);
+                    await _context.SaveChangesAsync();
+                }
+
                 LoginFailures.TryRemove(lockKey, out _);
                 return Ok(new
                 {
                     message = "Đăng nhập Khách hàng thành công",
-                    user = new { id = customer.Id, name = customer.FullName, role = "customer", user = customer.Email, phone = customer.PhoneNumber },
+                    user = new { id = customer.Id, name = customer.FullName, role = "customer", user = customer.Email, phone = customer.PhoneNumber, phoneNumber = customer.PhoneNumber },
                     rememberMe = request.RememberMe
                 });
             }
@@ -120,5 +128,37 @@ namespace AutoGarageManager.Controllers
 
             return BadRequest(new { message = "Sai tài khoản hoặc mật khẩu", failedCount = nextCount });
         }
+        private static bool IsHashedPassword(string? stored)
+        {
+            return !string.IsNullOrWhiteSpace(stored) && stored.StartsWith("PBKDF2$", StringComparison.Ordinal);
+        }
+
+        private static string HashPassword(string password)
+        {
+            var salt = RandomNumberGenerator.GetBytes(16);
+            var hash = Rfc2898DeriveBytes.Pbkdf2(password, salt, 100_000, HashAlgorithmName.SHA256, 32);
+            return $"PBKDF2$100000${Convert.ToBase64String(salt)}${Convert.ToBase64String(hash)}";
+        }
+
+        private static bool VerifyPassword(string password, string stored)
+        {
+            if (string.IsNullOrEmpty(stored)) return false;
+
+            if (!IsHashedPassword(stored))
+            {
+                return stored == password;
+            }
+
+            var parts = stored.Split('$');
+            if (parts.Length != 4) return false;
+
+            if (!int.TryParse(parts[1], out var iterations)) return false;
+
+            var salt = Convert.FromBase64String(parts[2]);
+            var expected = Convert.FromBase64String(parts[3]);
+            var actual = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA256, expected.Length);
+            return CryptographicOperations.FixedTimeEquals(actual, expected);
+        }
+
     }
 }

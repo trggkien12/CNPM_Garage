@@ -20,26 +20,43 @@ namespace AutoGarageManager.Controllers
         [HttpGet("dashboard")]
         public async Task<IActionResult> GetDashboardStats()
         {
-            var totalCustomers = await _context.Customers.CountAsync();
-            var totalCars = await _context.Cars.CountAsync();
-            var totalOrders = await _context.RepairOrders.CountAsync();
-            var totalAppointments = await _context.Appointments.CountAsync();
-            var totalServices = await _context.Services.CountAsync();
-            var totalSpareParts = await _context.SpareParts.CountAsync();
-            var lowStockParts = await _context.SpareParts.CountAsync(p => p.StockQuantity < 5);
+            var totalCustomersTask = _context.Customers.CountAsync();
+            var totalCarsTask = _context.Cars.CountAsync();
+            var totalOrdersTask = _context.RepairOrders.CountAsync();
+            var totalAppointmentsTask = _context.Appointments.CountAsync();
+            var totalServicesTask = _context.Services.CountAsync();
+            var totalSparePartsTask = _context.SpareParts.CountAsync();
+            var lowStockPartsTask = _context.SpareParts.CountAsync(p => p.StockQuantity > 0 && p.StockQuantity <= 5);
+            var pendingAppointmentsTask = _context.Appointments.CountAsync(a => a.Status.Contains("Chờ"));
+            var pendingQrInvoicesTask = _context.Invoices.CountAsync(i => i.Status.Contains("Chờ xác nhận thanh toán"));
+            var totalConfirmedPaidAmountTask = _context.Payments
+                .Where(p => p.Status == StatusConfirmed || p.Status == "Đã thanh toán")
+                .SumAsync(p => (decimal?)p.Amount);
+
+            await Task.WhenAll(
+                totalCustomersTask,
+                totalCarsTask,
+                totalOrdersTask,
+                totalAppointmentsTask,
+                totalServicesTask,
+                totalSparePartsTask,
+                lowStockPartsTask,
+                pendingAppointmentsTask,
+                pendingQrInvoicesTask,
+                totalConfirmedPaidAmountTask
+            );
 
             var invoices = await _context.Invoices.Include(i => i.Payments).ToListAsync();
-            var paidInvoices = invoices.Count(i => i.Payments.Where(p => p.Status == StatusConfirmed).Sum(p => p.Amount) >= i.TotalAmount);
-            var pendingQrInvoices = invoices.Count(i => i.Status == "Chờ xác nhận thanh toán QR");
-            var unpaidInvoices = invoices.Count - paidInvoices - pendingQrInvoices;
+            var paidInvoices = invoices.Count(i => i.Payments.Where(p => p.Status == StatusConfirmed || p.Status == "Đã thanh toán").Sum(p => p.Amount) >= i.TotalAmount);
+            var unpaidInvoices = invoices.Count - paidInvoices - pendingQrInvoicesTask.Result;
 
             var totalRevenue = invoices
-                .Where(i => i.Payments.Where(p => p.Status == StatusConfirmed).Sum(p => p.Amount) >= i.TotalAmount)
+                .Where(i => i.Payments.Where(p => p.Status == StatusConfirmed || p.Status == "Đã thanh toán").Sum(p => p.Amount) >= i.TotalAmount)
                 .Sum(i => i.TotalAmount);
 
-            var totalConfirmedPaidAmount = await _context.Payments
-                .Where(p => p.Status == StatusConfirmed)
-                .SumAsync(p => (decimal?)p.Amount) ?? 0;
+            // Nếu có thanh toán xác nhận nhưng tổng invoice chưa khớp, vẫn dùng số tiền đã xác nhận để dashboard không bị thiếu doanh thu.
+            var totalConfirmedPaidAmount = totalConfirmedPaidAmountTask.Result ?? 0;
+            var dashboardRevenue = Math.Max(totalRevenue, totalConfirmedPaidAmount);
 
             var mostUsedServices = await _context.RepairDetails
                 .Include(d => d.Service)
@@ -51,18 +68,19 @@ namespace AutoGarageManager.Controllers
 
             return Ok(ApiResponse.SuccessResponse(new
             {
-                TotalCustomers = totalCustomers,
-                TotalCars = totalCars,
-                TotalOrders = totalOrders,
-                TotalAppointments = totalAppointments,
-                TotalServices = totalServices,
-                TotalSpareParts = totalSpareParts,
-                TotalRevenue = totalRevenue,
+                TotalCustomers = totalCustomersTask.Result,
+                TotalCars = totalCarsTask.Result,
+                TotalOrders = totalOrdersTask.Result,
+                TotalAppointments = totalAppointmentsTask.Result,
+                TotalPendingAppointments = pendingAppointmentsTask.Result,
+                TotalServices = totalServicesTask.Result,
+                TotalSpareParts = totalSparePartsTask.Result,
+                TotalRevenue = dashboardRevenue,
                 TotalConfirmedPaidAmount = totalConfirmedPaidAmount,
                 PaidInvoices = paidInvoices,
-                PendingQrInvoices = pendingQrInvoices,
+                PendingQrInvoices = pendingQrInvoicesTask.Result,
                 UnpaidInvoices = unpaidInvoices,
-                LowStockParts = lowStockParts,
+                LowStockParts = lowStockPartsTask.Result,
                 MostUsedServices = mostUsedServices
             }, "Thống kê dashboard"));
         }

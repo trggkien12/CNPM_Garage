@@ -111,23 +111,51 @@ namespace AutoGarageManager.Controllers
         }
 
         [HttpDelete("{id}")]
-        public async Task<ActionResult<ApiResponse<string>>> DeleteRepairOrder(int id)
+public async Task<ActionResult<ApiResponse<string>>> DeleteRepairOrder(int id)
+{
+    if (id <= 0)
+        return BadRequest(ApiResponse<string>.Failure("Id không hợp lệ"));
+
+    var order = await _context.RepairOrders
+        .FirstOrDefaultAsync(r => r.RepairOrderId == id);
+
+    if (order == null)
+        return NotFound(ApiResponse<string>.Failure("Không tìm thấy phiếu sửa"));
+
+    var hasInvoice = await _context.Invoices.AnyAsync(i => i.RepairOrderId == id);
+    if (hasInvoice)
+        return BadRequest(ApiResponse<string>.Failure("Không thể xóa phiếu sửa đã có hóa đơn"));
+
+    // Lấy danh sách phụ tùng của phiếu sửa từ bảng RepairParts
+    var repairParts = await _context.RepairParts
+        .Include(rp => rp.SparePart)
+        .Where(rp => rp.RepairOrderId == id)
+        .ToListAsync();
+
+    // Hoàn lại tồn kho phụ tùng đã trừ
+    foreach (var part in repairParts)
+    {
+        if (part.SparePart != null)
         {
-            if (id <= 0)
-                return BadRequest(ApiResponse<string>.Failure("Id không hợp lệ"));
-
-            var order = await _context.RepairOrders.FindAsync(id);
-            if (order == null)
-                return NotFound(ApiResponse<string>.Failure("Không tìm thấy phiếu sửa"));
-
-            var hasInvoice = await _context.Invoices.AnyAsync(i => i.RepairOrderId == id);
-            if (hasInvoice)
-                return BadRequest(ApiResponse<string>.Failure("Không thể xóa phiếu sửa đã có hóa đơn"));
-
-            _context.RepairOrders.Remove(order);
-            await _context.SaveChangesAsync();
-
-            return Ok(ApiResponse<string>.SuccessResponse(null, "Xóa phiếu sửa thành công"));
+            part.SparePart.StockQuantity += part.Quantity;
         }
+    }
+
+    // Lấy danh sách dịch vụ sửa chữa liên quan
+    var repairDetails = await _context.RepairDetails
+        .Where(d => d.RepairOrderId == id)
+        .ToListAsync();
+
+    // Xóa dữ liệu con trước
+    _context.RepairParts.RemoveRange(repairParts);
+    _context.RepairDetails.RemoveRange(repairDetails);
+
+    // Xóa phiếu sửa
+    _context.RepairOrders.Remove(order);
+
+    await _context.SaveChangesAsync();
+
+    return Ok(ApiResponse<string>.SuccessResponse(null, "Xóa phiếu sửa thành công"));
+}
     }
 }

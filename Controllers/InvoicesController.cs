@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using AutoGarageManager.Data;
+using AutoGarageManager.DTOs;
 using AutoGarageManager.Models;
 using AutoGarageManager.Services;
 
@@ -58,18 +59,49 @@ namespace AutoGarageManager.Controllers
         {
             var invoices = await _context.Invoices
                 .Include(i => i.RepairOrder)
+                    .ThenInclude(r => r.Car)
+                    .ThenInclude(c => c.Customer)
                 .Include(i => i.Payments)
                 .OrderByDescending(i => i.CreatedAt)
                 .Select(i => new
                 {
                     i.InvoiceId,
+                    Id = i.InvoiceId,
                     i.RepairOrderId,
                     i.TotalAmount,
+                    Amount = i.TotalAmount,
+                    Price = i.TotalAmount,
                     i.CreatedAt,
+                    F4 = i.CreatedAt,
                     PaidAmount = i.Payments.Where(p => p.Status == StatusConfirmed).Sum(p => p.Amount),
                     PendingAmount = i.Payments.Where(p => p.Status == "Chờ xác nhận").Sum(p => p.Amount),
                     RemainingAmount = i.TotalAmount - i.Payments.Where(p => p.Status == StatusConfirmed).Sum(p => p.Amount),
-                    Status = i.Status
+                    Status = i.Status,
+                    InvoiceStatus = i.Status,
+                    CustomerName = i.RepairOrder != null && i.RepairOrder.Car != null && i.RepairOrder.Car.Customer != null ? i.RepairOrder.Car.Customer.FullName : ExtractNoteValue(i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => p.Note).FirstOrDefault(), "CUSTOMER_NAME") ?? "Khách hàng",
+                    CustomerAccount = i.RepairOrder != null && i.RepairOrder.Car != null && i.RepairOrder.Car.Customer != null ? (string.IsNullOrWhiteSpace(i.RepairOrder.Car.Customer.PhoneNumber) ? i.RepairOrder.Car.Customer.Email : i.RepairOrder.Car.Customer.PhoneNumber) : ExtractNoteValue(i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => p.Note).FirstOrDefault(), "CUSTOMER_ACCOUNT") ?? "",
+                    ServiceName = ExtractNoteValue(i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => p.Note).FirstOrDefault(), "SERVICE") ?? "Hóa đơn dịch vụ",
+                    LocalOrderId = ExtractNoteValue(i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => p.Note).FirstOrDefault(), "LOCAL_ORDER_ID"),
+                    LatestPaymentId = i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => (int?)p.PaymentId).FirstOrDefault(),
+                    LatestPaymentStatus = i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => p.Status).FirstOrDefault(),
+                    LatestPaymentMethod = i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => p.PaymentMethod).FirstOrDefault(),
+                    RejectReason = ExtractNoteValue(i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => p.Note).FirstOrDefault(), "REJECT_REASON"),
+                    Payments = i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => new
+                    {
+                        p.PaymentId,
+                        p.Amount,
+                        p.PaymentMethod,
+                        p.Status,
+                        p.PaymentDate,
+                        p.ConfirmedAt,
+                        p.ConfirmedBy,
+                        p.Note,
+                        LocalOrderId = ExtractNoteValue(p.Note, "LOCAL_ORDER_ID"),
+                        CustomerName = ExtractNoteValue(p.Note, "CUSTOMER_NAME"),
+                        CustomerAccount = ExtractNoteValue(p.Note, "CUSTOMER_ACCOUNT"),
+                        ServiceName = ExtractNoteValue(p.Note, "SERVICE"),
+                        RejectReason = ExtractNoteValue(p.Note, "REJECT_REASON")
+                    })
                 })
                 .ToListAsync();
 
@@ -115,6 +147,66 @@ namespace AutoGarageManager.Controllers
             }));
         }
 
+        [HttpPut("{id}/confirm-payment")]
+        public async Task<IActionResult> ConfirmLatestPayment(int id)
+        {
+            var invoice = await _context.Invoices
+                .Include(i => i.Payments)
+                .FirstOrDefaultAsync(i => i.InvoiceId == id);
+
+            if (invoice == null)
+                return NotFound(ApiResponse.Failure("Không tìm thấy hóa đơn"));
+
+            var payment = invoice.Payments
+                .Where(p => p.Status == "Chờ xác nhận")
+                .OrderByDescending(p => p.PaymentDate)
+                .FirstOrDefault();
+
+            if (payment == null)
+                return BadRequest(ApiResponse.Failure("Hóa đơn không có thanh toán QR chờ xác nhận"));
+
+            payment.Status = StatusConfirmed;
+            payment.ConfirmedAt = DateTime.Now;
+            payment.ConfirmedBy = "Admin";
+
+            var paidAmount = invoice.Payments.Where(p => p.Status == StatusConfirmed).Sum(p => p.Amount);
+            invoice.Status = paidAmount >= invoice.TotalAmount ? "Đã thanh toán" : "Chưa thanh toán";
+
+            await _context.SaveChangesAsync();
+            return Ok(ApiResponse.SuccessResponse(new { invoice, payment }, "Đã xác nhận thanh toán hóa đơn"));
+        }
+
+        [HttpPut("{id}/reject-payment")]
+        public async Task<IActionResult> RejectLatestPayment(int id, [FromBody] RejectPaymentDto dto)
+        {
+            if (dto == null || string.IsNullOrWhiteSpace(dto.Reason))
+                return BadRequest(ApiResponse.Failure("Vui lòng nhập lý do từ chối thanh toán"));
+
+            var invoice = await _context.Invoices
+                .Include(i => i.Payments)
+                .FirstOrDefaultAsync(i => i.InvoiceId == id);
+
+            if (invoice == null)
+                return NotFound(ApiResponse.Failure("Không tìm thấy hóa đơn"));
+
+            var payment = invoice.Payments
+                .Where(p => p.Status == "Chờ xác nhận")
+                .OrderByDescending(p => p.PaymentDate)
+                .FirstOrDefault();
+
+            if (payment == null)
+                return BadRequest(ApiResponse.Failure("Hóa đơn không có thanh toán QR chờ xác nhận"));
+
+            payment.Status = "Đã từ chối";
+            payment.ConfirmedAt = DateTime.Now;
+            payment.ConfirmedBy = string.IsNullOrWhiteSpace(dto.ConfirmedBy) ? "Admin" : dto.ConfirmedBy.Trim();
+            payment.Note = (payment.Note ?? "") + $"\nREJECT_REASON:{dto.Reason.Trim()}";
+            invoice.Status = "Thanh toán bị từ chối";
+
+            await _context.SaveChangesAsync();
+            return Ok(ApiResponse.SuccessResponse(new { invoice, payment }, "Đã từ chối thanh toán hóa đơn"));
+        }
+
         [HttpGet("{id}/print")]
         public async Task<IActionResult> PrintInvoice(int id)
         {
@@ -144,6 +236,26 @@ namespace AutoGarageManager.Controllers
             };
 
             return Ok(ApiResponse.SuccessResponse(printData, "Dữ liệu in hóa đơn"));
+        }
+
+        private static string? ExtractNoteValue(string? note, string key)
+        {
+            if (string.IsNullOrWhiteSpace(note)) return null;
+
+            var lines = note.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var line in lines)
+            {
+                var idx = line.IndexOf(':');
+                if (idx <= 0) continue;
+
+                var left = line[..idx].Trim();
+                var right = line[(idx + 1)..].Trim();
+
+                if (left.Equals(key, StringComparison.OrdinalIgnoreCase))
+                    return right;
+            }
+
+            return null;
         }
     }
 }

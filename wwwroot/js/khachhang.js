@@ -5,10 +5,22 @@
         let cachedBookingServices = [];
         let selectedBookingServiceId = '';
 
+
+        function displayCustomerAccount(value) {
+            const raw = String(value || '').trim();
+            const fakeEmail = raw.match(/^(0\d{9,10})@khachhang\.com$/i);
+            if(fakeEmail) return fakeEmail[1];
+            return raw;
+        }
+
+        function getCurrentUserAccount() {
+            return displayCustomerAccount((user && (user.phoneNumber || user.user || user.email)) || '');
+        }
+
         function syncUserInfo() {
             if(!user) return;
             const userName = user.name || user.fullName || "Khách hàng";
-            const userEmail = user.user || user.email || "Email trống";
+            const userEmail = getCurrentUserAccount() || "Tài khoản trống";
 
             document.getElementById('nav-name').innerText = userName;
             document.getElementById('welcome-msg').innerText = `Xin chào, ${userName}!`;
@@ -28,8 +40,23 @@
         }
 
         function getCurrentUserKey() {
-            const raw = (user && (user.user || user.email || user.phoneNumber || user.name)) || 'guest';
+            const raw = getCurrentUserAccount() || (user && user.name) || 'guest';
             return String(raw).trim().toLowerCase().replace(/[^a-z0-9@._-]/g, '_');
+        }
+
+        function normalizeUserKey(value) {
+            return displayCustomerAccount(value || '')
+                .trim()
+                .toLowerCase()
+                .replace(/\s+/g, '')
+                .replace(/[^a-z0-9@._-]/g, '_');
+        }
+
+        function normalizeCompareText(value) {
+            return displayCustomerAccount(value || '')
+                .trim()
+                .toLowerCase()
+                .replace(/\s+/g, '');
         }
 
         function getCartKey() {
@@ -37,14 +64,41 @@
         }
 
         function isMine(record) {
-            const key = getCurrentUserKey();
-            const account = String((user && (user.user || user.email || user.phoneNumber)) || '').trim().toLowerCase();
-            const name = String((user && (user.name || user.fullName)) || '').trim().toLowerCase();
             if (!record) return false;
-            if (String(record.ownerUser || '').trim().toLowerCase() === key) return true;
-            if (account && String(record.customerAccount || record.customerEmail || record.user || '').trim().toLowerCase() === account) return true;
-            // Chỉ fallback theo tên nếu record chưa có khóa tài khoản và tên khớp tuyệt đối
-            if (!record.ownerUser && !record.customerAccount && name && String(record.f2 || record.customerName || '').trim().toLowerCase() === name) return true;
+
+            const account = normalizeCompareText(getCurrentUserAccount() || '');
+            const name = normalizeCompareText((user && (user.name || user.fullName)) || '');
+            const email = normalizeCompareText((user && (user.email || user.user)) || '');
+            const phone = normalizeCompareText((user && (user.phoneNumber || user.phone || user.phone_number)) || '');
+            const key = normalizeUserKey(getCurrentUserAccount() || (user && (user.name || user.fullName)) || 'guest');
+
+            const fields = [
+                record.ownerUser,
+                record.customerAccount,
+                record.customerEmail,
+                record.customerPhone,
+                record.phoneNumber,
+                record.email,
+                record.user,
+                record.customerName,
+                record.fullName,
+                record.name,
+                record.f2,
+                record.note,
+                record.description
+            ];
+
+            const text = normalizeCompareText(fields.join(' '));
+            const owner = normalizeUserKey(record.ownerUser || '');
+
+            if (owner && owner === key) return true;
+            if (account && text.includes(account)) return true;
+            if (phone && text.includes(phone)) return true;
+            if (email && text.includes(email)) return true;
+
+            // Fallback theo tên: dùng khi dữ liệu SQL chỉ trả customerName, không có tài khoản/sđt/email.
+            if (name && text.includes(name)) return true;
+
             return false;
         }
 
@@ -158,7 +212,7 @@
                 id: 'HD' + Math.floor(Math.random() * 1000000),
                 bookingId: booking.id,
                 ownerUser: getCurrentUserKey(),
-                customerAccount: booking.customerAccount || user.user || user.email || user.phoneNumber || '',
+                customerAccount: displayCustomerAccount(booking.customerAccount || getCurrentUserAccount() || ''),
                 customerName: booking.customerName || user.name || user.fullName || 'Khách hàng',
                 f1: 'Hóa đơn tạm tính: ' + (service ? service.name : booking.carService || 'Dịch vụ sửa chữa'),
                 f2: booking.customerName || user.name || user.fullName || 'Khách hàng',
@@ -179,6 +233,7 @@
 
         async function readServicesFromApi() {
             const endpoints = [
+                '/api/Services',
                 '/api/services',
                 '/api/service',
                 '/api/repairservices',
@@ -202,46 +257,26 @@
         }
 
         async function getAllServicesForCustomer() {
-            const localKeys = [
-                'db_service',      // key Admin đang dùng nhiều nhất
-                'db_services',
-                'services',
-                'db_repair_services',
-                'db_repairServices',
-                'db_product'
-            ];
-
-            let rawServices = [];
-            localKeys.forEach(key => {
-                rawServices = rawServices.concat(safeParseArray(key));
-            });
-
-            // Nếu backend/API có dịch vụ thì merge thêm vào.
+            // FIX: Phần Dịch vụ sửa chữa của khách hàng chỉ lấy từ SQL/API.
+            // Không gộp db_service/localStorage/default nữa để tránh lỗi hiện lặp dịch vụ.
             const apiServices = await readServicesFromApi();
-            rawServices = rawServices.concat(apiServices);
 
-            // Xóa trùng theo id/code/name.
             const seen = new Set();
-            let services = rawServices
+            const services = apiServices
                 .filter(isRepairService)
                 .map(normalizeService)
                 .filter(s => {
-                    const k = String(s.id || s.code || s.name).toLowerCase();
-                    if (seen.has(k)) return false;
-                    seen.add(k);
+                    // Ưu tiên lọc trùng theo Mã DV; nếu thiếu mã thì lọc theo Tên dịch vụ.
+                    const codeKey = String(s.code || '').trim().toLowerCase();
+                    const nameKey = String(s.name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+                    const key = codeKey || nameKey;
+
+                    if (!key) return false;
+                    if (seen.has(key)) return false;
+
+                    seen.add(key);
                     return true;
                 });
-
-            // Dữ liệu mẫu để trang khách hàng không bị trống khi mới chạy project.
-            if (services.length === 0) {
-                services = [
-                    { id: 'DV001', name: 'Thay dầu máy', code: 'DV001', price: 350000, desc: 'Thay dầu động cơ, kiểm tra lọc dầu và tình trạng vận hành.' },
-                    { id: 'DV002', name: 'Rửa xe cao cấp', code: 'DV002', price: 80000, desc: 'Vệ sinh ngoại thất, làm sạch kính, mâm và thân xe.' },
-                    { id: 'DV003', name: 'Kiểm tra phanh', code: 'DV003', price: 150000, desc: 'Kiểm tra má phanh, dầu phanh và độ an toàn hệ thống phanh.' },
-                    { id: 'DV004', name: 'Bảo dưỡng định kỳ', code: 'DV004', price: 800000, desc: 'Kiểm tra tổng quát xe theo quy trình bảo dưỡng garage.' },
-                    { id: 'DV005', name: 'Phủ Ceramic cao cấp', code: 'DV005', price: 5000000, desc: 'Bảo vệ sơn xe, tăng độ bóng và hạn chế bám bẩn.' }
-                ];
-            }
 
             return services;
         }
@@ -335,7 +370,7 @@
         }
 
         // ==========================================
-        // 4. CHỨC NĂNG GIỎ HÀNG
+        // 4. CHỨC NĂNG THANH TOÁN
         // ==========================================
         
         function addToCart(id, name, price) {
@@ -412,11 +447,13 @@
 
         function openQrPayment(order) {
             pendingQrOrder = order;
-            const content = `THANH TOAN ${order.id}`;
-            document.getElementById('qrOrderId').innerText = order.id;
-            document.getElementById('qrAmount').innerText = Number(order.f3).toLocaleString('vi-VN') + 'đ';
+            const orderId = order.id || order.localOrderId || order.invoiceId || order.paymentId || ('HD' + Date.now());
+            const amount = Number(order.f3 || order.totalAmount || order.amount || 0);
+            const content = `THANH TOAN ${orderId}`;
+            document.getElementById('qrOrderId').innerText = orderId;
+            document.getElementById('qrAmount').innerText = amount.toLocaleString('vi-VN') + 'đ';
             document.getElementById('qrContent').innerText = content;
-            document.getElementById('qrPaymentImage').src = buildVietQrUrl(order.f3, content);
+            document.getElementById('qrPaymentImage').src = buildVietQrUrl(amount, content);
             document.getElementById('qrPaymentModal').classList.add('active');
         }
 
@@ -425,15 +462,14 @@
             document.getElementById('qrPaymentModal').classList.remove('active');
         }
 
-        function confirmQrPayment() {
+        async function confirmQrPayment() {
             if(!pendingQrOrder) return;
-            let orders = JSON.parse(localStorage.getItem('db_order')) || [];
+
             const now = new Date().toLocaleString('vi-VN');
-            const existingIndex = orders.findIndex(o => String(o.id) === String(pendingQrOrder.id));
             const updatedOrder = {
                 ...pendingQrOrder,
                 ownerUser: pendingQrOrder.ownerUser || getCurrentUserKey(),
-                customerAccount: pendingQrOrder.customerAccount || user.user || user.email || user.phoneNumber || '',
+                customerAccount: displayCustomerAccount(pendingQrOrder.customerAccount || getCurrentUserAccount() || ''),
                 customerName: pendingQrOrder.customerName || user.name || user.fullName || 'Khách hàng',
                 paymentMethod: 'Chuyển khoản VCB',
                 paymentStatus: 'Chờ Admin/Nhân viên xác nhận chuyển khoản QR VCB',
@@ -444,9 +480,33 @@
                 bankOwner: BANK_CONFIG.accountName
             };
 
+            try {
+                const payment = await apiJson('/api/Payments/qr-request', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        invoiceId: pendingQrOrder.invoiceId || pendingQrOrder.InvoiceId || null,
+                        localOrderId: pendingQrOrder.id || pendingQrOrder.localOrderId || '',
+                        customerName: updatedOrder.customerName,
+                        customerAccount: updatedOrder.customerAccount,
+                        customerEmail: user.email || '',
+                        serviceName: pendingQrOrder.f1 || pendingQrOrder.serviceName || 'Hóa đơn dịch vụ',
+                        amount: Number(pendingQrOrder.f3 || pendingQrOrder.totalAmount || pendingQrOrder.amount || 0),
+                        note: `Khách đã bấm Đã chuyển khoản lúc ${now}`
+                    })
+                });
+
+                updatedOrder.paymentId = payment.paymentId || payment.PaymentId || payment.id || payment.Id;
+                updatedOrder.invoiceId = payment.invoiceId || payment.InvoiceId || pendingQrOrder.invoiceId || null;
+                updatedOrder.sqlSynced = true;
+            } catch(e) {
+                alert(e.message || 'Không gửi được yêu cầu thanh toán QR lên SQL. Vui lòng thử lại.');
+                return;
+            }
+
+            let orders = JSON.parse(localStorage.getItem('db_order')) || [];
+            const existingIndex = orders.findIndex(o => String(o.id) === String(updatedOrder.id));
             if(existingIndex >= 0) orders[existingIndex] = updatedOrder;
             else orders.push(updatedOrder);
-
             localStorage.setItem('db_order', JSON.stringify(orders));
 
             if(pendingQrOrder.clearCart) {
@@ -455,9 +515,9 @@
             }
 
             document.getElementById('qrPaymentModal').classList.remove('active');
-            alert('Đã gửi yêu cầu xác nhận thanh toán QR. Hóa đơn của tôi đang chờ Admin/Nhân viên kiểm tra giao dịch.');
+            alert('Đã gửi yêu cầu xác nhận thanh toán QR lên SQL. Hóa đơn đang chờ Admin/Nhân viên kiểm tra giao dịch.');
             pendingQrOrder = null;
-            loadOrders();
+            await loadOrders();
             updateStats();
             nav('order');
         }
@@ -475,9 +535,9 @@
             bookings.push({
                 id: 'BK' + Math.floor(Math.random() * 100000),
                 ownerUser: getCurrentUserKey(),
-                customerAccount: user.user || user.email || user.phoneNumber || '',
+                customerAccount: getCurrentUserAccount() || '',
                 customerName: user.name || user.fullName || 'Khách hàng',
-                customerEmail: user.user || user.email || '',
+                customerEmail: user.email || '',
                 type: 'Yêu cầu dịch vụ sửa chữa',
                 carService: itemNames,
                 date: 'Chưa chọn - Gara sẽ liên hệ',
@@ -534,6 +594,63 @@
             localStorage.setItem('db_car', JSON.stringify(cars));
         }
 
+        function normalizePlateText(value) {
+            return String(value || '').trim().toUpperCase();
+        }
+
+        async function apiJson(url, options = {}) {
+            const res = await fetch(url, {
+                ...options,
+                headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+                cache: 'no-store'
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || data.success === false) {
+                throw new Error(data.message || data.error || 'API lỗi');
+            }
+            return Array.isArray(data) ? data : (data.data || data);
+        }
+
+        async function getCurrentCustomerForApi() {
+            const account = displayCustomerAccount(getCurrentUserAccount() || '');
+            const phone = /^0\d{9,10}$/.test(account) ? account : ((user && user.phoneNumber) || '');
+            const email = (user && user.email && user.email.includes('@')) ? user.email : (phone ? `${phone}@khachhang.com` : `${getCurrentUserKey()}@khachhang.com`);
+            const name = (user && (user.name || user.fullName)) || 'Khách hàng';
+
+            let customers = [];
+            try { customers = await apiJson('/api/Customers'); } catch(e) { customers = []; }
+            const found = customers.find(c =>
+                String(c.phoneNumber || c.PhoneNumber || '').trim() === account ||
+                String(c.email || c.Email || '').trim().toLowerCase() === String(email).toLowerCase() ||
+                String(c.email || c.Email || '').trim().toLowerCase() === String(account).toLowerCase()
+            );
+            if (found) return found;
+
+            if (!/^0\d{9,10}$/.test(phone || account)) {
+                throw new Error('Tài khoản cần có số điện thoại hợp lệ để lưu xe lên SQL.');
+            }
+
+            return await apiJson('/api/Customers', {
+                method: 'POST',
+                body: JSON.stringify({
+                    fullName: name,
+                    phoneNumber: phone || account,
+                    email,
+                    address: '',
+                    password: '123456'
+                })
+            });
+        }
+
+        async function readAllCarsFromApi() {
+            try {
+                const cars = await apiJson('/api/Cars');
+                return Array.isArray(cars) ? cars : [];
+            } catch(e) {
+                return [];
+            }
+        }
+
         async function refreshBookingOptions(preferValue = '') {
             const select = document.getElementById('car-select-options');
             const serviceSelect = document.getElementById('booking-service-select');
@@ -544,7 +661,36 @@
             }
 
             if(!select) return;
-            const myCars = JSON.parse(localStorage.getItem(getMyCarKey())) || [];
+            let myCars = JSON.parse(localStorage.getItem(getMyCarKey())) || [];
+            try {
+                const apiCars = await readAllCarsFromApi();
+                const account = displayCustomerAccount(getCurrentUserAccount() || '').toLowerCase();
+                const myName = String((user && (user.name || user.fullName)) || '').toLowerCase();
+                apiCars.forEach(c => {
+                    const carAccount = displayCustomerAccount(c.customerPhone || c.CustomerPhone || c.customerEmail || c.CustomerEmail || '').toLowerCase();
+                    const carName = String(c.customerName || c.CustomerName || '').toLowerCase();
+                    const belongs = (account && carAccount === account) || (myName && carName === myName);
+                    if(!belongs) return;
+                    const plate = c.licensePlate || c.LicensePlate || c.f1 || c.plate;
+                    if(!plate) return;
+                    if(!myCars.find(x => normalizePlateText(x.plate) === normalizePlateText(plate))) {
+                        myCars.unshift({
+                            id: 'SQL_' + (c.carId || c.CarId || c.id || c.Id),
+                            apiCarId: c.carId || c.CarId || c.id || c.Id,
+                            customerId: c.customerId || c.CustomerId,
+                            ownerUser: getCurrentUserKey(),
+                            customerAccount: getCurrentUserAccount() || '',
+                            customerName: c.customerName || c.CustomerName || user.name || user.fullName || 'Khách hàng',
+                            plate,
+                            brand: c.brand || c.Brand || '',
+                            model: c.model || c.Model || '',
+                            year: c.year || c.Year || '',
+                            status: c.status || c.Status || 'Đang hoạt động'
+                        });
+                    }
+                });
+                localStorage.setItem(getMyCarKey(), JSON.stringify(myCars));
+            } catch(e) {}
             let options = [];
 
             myCars.forEach(car => {
@@ -574,9 +720,10 @@
             }
         }
 
-        function loadMyCars() {
+        async function loadMyCars() {
             // Không tạo xe mẫu cho mọi tài khoản nữa.
             // Tài khoản mới sẽ trống xe, khách phải tự thêm xe của mình.
+            await refreshBookingOptions();
             let cars = JSON.parse(localStorage.getItem(getMyCarKey())) || [];
             const box = document.getElementById('mycars-list');
             if(!box) return;
@@ -645,7 +792,7 @@
             saveAllAdminCars(adminCars);
         }
 
-        function editMyCar(carId) {
+        async function editMyCar(carId) {
             let cars = JSON.parse(localStorage.getItem(getMyCarKey())) || [];
             const index = cars.findIndex(c => String(c.id) === String(carId));
             if(index < 0) return alert('Không tìm thấy xe cần sửa!');
@@ -664,15 +811,38 @@
             const year = prompt('Nhập năm sản xuất:', car.year || '');
             if(year === null) return;
 
-            const cleanPlate = plate.trim();
+            const cleanPlate = normalizePlateText(plate);
             const cleanBrand = brand.trim();
             const cleanModel = model.trim();
             const cleanYear = year.trim();
             if(!cleanPlate || !cleanBrand || !cleanModel) {
                 return alert('Biển số, hãng xe và dòng xe không được bỏ trống!');
             }
-            if(cars.some(c => String(c.id) !== String(carId) && String(c.plate).trim().toLowerCase() === cleanPlate.toLowerCase())) {
-                return alert('Biển số này đã có trong tài khoản của bạn!');
+
+            try {
+                const allApiCars = await readAllCarsFromApi();
+                const duplicate = allApiCars.find(c => {
+                    const apiId = c.carId || c.CarId || c.id || c.Id;
+                    const plateApi = normalizePlateText(c.licensePlate || c.LicensePlate || c.plate || c.f1);
+                    return plateApi === cleanPlate && String(apiId) !== String(car.apiCarId || '');
+                });
+                if(duplicate) return alert('Biển số xe này đã được khách hàng khác đăng ký. Không thể sửa trùng biển số.');
+
+                if(car.apiCarId) {
+                    const customer = await getCurrentCustomerForApi();
+                    await apiJson(`/api/Cars/${car.apiCarId}`, {
+                        method: 'PUT',
+                        body: JSON.stringify({
+                            licensePlate: cleanPlate,
+                            brand: cleanBrand,
+                            model: cleanModel,
+                            year: Number(cleanYear) || new Date().getFullYear(),
+                            customerId: customer.id || customer.Id
+                        })
+                    });
+                }
+            } catch(e) {
+                return alert(e.message || 'Không cập nhật được xe lên SQL.');
             }
 
             const updatedCar = {
@@ -688,10 +858,10 @@
             syncMyCarToAdmin(updatedCar);
             loadMyCars();
             refreshBookingOptions('CAR_' + updatedCar.id);
-            alert('Đã cập nhật thông tin xe. Admin/Nhân viên cũng sẽ thấy thông tin mới.');
+            alert('Đã cập nhật thông tin xe lên SQL. Admin/Nhân viên sẽ thấy thông tin mới.');
         }
 
-        function deleteMyCar(carId) {
+        async function deleteMyCar(carId) {
             let cars = JSON.parse(localStorage.getItem(getMyCarKey())) || [];
             const car = cars.find(c => String(c.id) === String(carId));
             if(!car) return alert('Không tìm thấy xe cần xóa!');
@@ -699,38 +869,74 @@
                 return alert('Bạn không có quyền xóa xe này!');
             }
 
-            const bookings = JSON.parse(localStorage.getItem('db_booking')) || [];
-            const orders = JSON.parse(localStorage.getItem('db_order')) || [];
-            const relatedBookings = bookings.filter(b => isMine(b) && String(b.selectedTarget || '').includes(car.id));
-            const relatedOrders = orders.filter(o => isMine(o) && (String(o.plate || '').toLowerCase() === String(car.plate || '').toLowerCase() || String(o.carId || '') === String(car.id)));
-            let warning = `Bạn có chắc muốn xóa xe ${car.brand || ''} ${car.model || ''} - ${car.plate || ''}?`;
-            if(relatedBookings.length || relatedOrders.length) {
-                warning += `\n\nXe này đang có ${relatedBookings.length} lịch hẹn và ${relatedOrders.length} hóa đơn liên quan. Lịch sử cũ vẫn giữ nguyên nhưng xe sẽ bị xóa khỏi mục Xe của tôi.`;
-            }
+            const warning = `Bạn có chắc muốn xóa xe ${car.brand || ''} ${car.model || ''} - ${car.plate || ''}?`;
             if(!confirm(warning)) return;
+
+            try {
+                if(car.apiCarId) {
+                    await apiJson(`/api/Cars/${car.apiCarId}`, { method: 'DELETE' });
+                }
+            } catch(e) {
+                return alert(e.message || 'Không thể xóa xe trên SQL. Có thể xe đang có lịch hẹn/phiếu sửa.');
+            }
 
             cars = cars.filter(c => String(c.id) !== String(carId));
             localStorage.setItem(getMyCarKey(), JSON.stringify(cars));
             removeMyCarFromAdmin(car);
             loadMyCars();
             refreshBookingOptions();
-            alert('Đã xóa xe khỏi tài khoản của bạn và cập nhật lại danh sách xe bên Admin.');
+            alert('Đã xóa xe khỏi SQL và cập nhật lại danh sách xe bên Admin.');
         }
 
-        function addMyCar() {
+        async function addMyCar() {
             const plate = document.getElementById('new-car-plate').value.trim();
             const brand = document.getElementById('new-car-brand').value.trim();
             const model = document.getElementById('new-car-model').value.trim();
             const year = document.getElementById('new-car-year').value.trim();
             if(!plate || !brand || !model) return alert('Vui lòng nhập biển số, hãng xe và dòng xe!');
 
+            const cleanPlate = normalizePlateText(plate);
+            let cars = JSON.parse(localStorage.getItem(getMyCarKey())) || [];
+            if(cars.some(c => normalizePlateText(c.plate) === cleanPlate)) {
+                return alert('Biển số này đã có trong tài khoản của bạn!');
+            }
+
+            try {
+                const allApiCars = await readAllCarsFromApi();
+                if(allApiCars.some(c => normalizePlateText(c.licensePlate || c.LicensePlate || c.plate || c.f1) === cleanPlate)) {
+                    return alert('Biển số xe này đã được khách hàng khác đăng ký. Bạn không thể đăng ký trùng biển số.');
+                }
+            } catch(e) {}
+
+            let apiCarId = null;
+            let customerId = null;
+            try {
+                const customer = await getCurrentCustomerForApi();
+                customerId = customer.id || customer.Id;
+                const createdCar = await apiJson('/api/Cars', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        licensePlate: cleanPlate,
+                        brand,
+                        model,
+                        year: Number(year) || new Date().getFullYear(),
+                        customerId
+                    })
+                });
+                apiCarId = createdCar.carId || createdCar.CarId || createdCar.id || createdCar.Id;
+            } catch(e) {
+                return alert(e.message || 'Không lưu được xe lên SQL. Vui lòng thử lại.');
+            }
+
             const carId = 'CAR' + Date.now();
             const carRecord = {
                 id: carId,
+                apiCarId,
+                customerId,
                 ownerUser: getCurrentUserKey(),
-                customerAccount: user.user || user.email || user.phoneNumber || '',
+                customerAccount: getCurrentUserAccount() || '',
                 customerName: user.name || user.fullName || 'Khách hàng',
-                plate,
+                plate: cleanPlate,
                 brand,
                 model,
                 year,
@@ -740,14 +946,8 @@
                 img: 'https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&w=1200&q=80'
             };
 
-            let cars = JSON.parse(localStorage.getItem(getMyCarKey())) || [];
-            if(cars.some(c => String(c.plate).trim().toLowerCase() === plate.toLowerCase())) {
-                return alert('Biển số này đã có trong tài khoản của bạn!');
-            }
             cars.unshift(carRecord);
             localStorage.setItem(getMyCarKey(), JSON.stringify(cars));
-
-            // Đồng bộ sang Admin → Quản lý xe để nhân viên thấy xe khách vừa thêm.
             syncMyCarToAdmin(carRecord);
 
             document.getElementById('new-car-plate').value = '';
@@ -756,10 +956,10 @@
             document.getElementById('new-car-year').value = '';
             loadMyCars();
             refreshBookingOptions();
-            alert('Đã thêm xe vào mục Xe của tôi và đồng bộ sang Admin.');
+            alert('Đã thêm xe vào SQL. Admin máy tính sẽ nhìn thấy xe này trong Quản lý xe.');
         }
 
-        function submitBooking() {
+        async function submitBooking() {
             const dateInput = document.getElementById('booking-date').value;
             const selectEl = document.getElementById('car-select-options');
             const selectedOption = selectEl && selectEl.options.length ? selectEl.options[selectEl.selectedIndex] : null;
@@ -778,13 +978,49 @@
                 return;
             }
 
+            const appointmentDate = new Date(dateInput);
+            if (appointmentDate <= new Date()) {
+                alert('Ngày giờ hẹn phải lớn hơn thời điểm hiện tại!');
+                return;
+            }
+
+            let selectedCarIdForApi = null;
+            let selectedLocalCar = null;
+            if (String(selectedValue).startsWith('CAR_')) {
+                const localCarId = String(selectedValue).replace('CAR_', '');
+                const myCarsForBooking = JSON.parse(localStorage.getItem(getMyCarKey()) || '[]');
+                selectedLocalCar = myCarsForBooking.find(c => String(c.id) === localCarId);
+                selectedCarIdForApi = selectedLocalCar && selectedLocalCar.apiCarId ? Number(selectedLocalCar.apiCarId) : null;
+            }
+
+            try {
+                await apiJson('/api/Appointments/customer-request', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        customerName: user.name || user.fullName || 'Khách hàng',
+                        customerAccount: getCurrentUserAccount() || '',
+                        customerEmail: user.email || '',
+                        type: selectedBookingType,
+                        serviceName: selectedService.name,
+                        estimatedAmount: Number(selectedService.price) || 0,
+                        selectedTarget: selectedValue,
+                        carId: selectedCarIdForApi,
+                        appointmentDate: dateInput,
+                        note: note || `Khách đặt lịch dịch vụ: ${selectedService.name}. Tạm tính: ${Number(selectedService.price || 0).toLocaleString('vi-VN')}đ`
+                    })
+                });
+            } catch(e) {
+                alert(e.message || 'Không gửi được lịch hẹn lên SQL. Có thể khung giờ này đã quá nhiều người đặt, vui lòng chọn giờ khác.');
+                return;
+            }
+
             const now = new Date().toLocaleString('vi-VN');
             const booking = {
                 id: 'BK' + Math.floor(Math.random() * 100000),
                 ownerUser: getCurrentUserKey(),
-                customerAccount: user.user || user.email || user.phoneNumber || '',
+                customerAccount: getCurrentUserAccount() || '',
                 customerName: user.name || user.fullName || 'Khách hàng',
-                customerEmail: user.user || user.email || '',
+                customerEmail: user.email || '',
                 type: selectedBookingType,
                 carService: selectedService.name,
                 serviceId: selectedService.id,
@@ -831,11 +1067,40 @@
             return 'done';
         }
 
-        function loadMyBookings() {
-            const bookings = JSON.parse(localStorage.getItem('db_booking')) || [];
+        async function loadMyBookings() {
             const container = document.getElementById('my-bookings-list');
             if(!container) return;
-            const myBookings = bookings.filter(b => isMine(b));
+
+            let localBookings = JSON.parse(localStorage.getItem('db_booking')) || [];
+            let apiAppointments = [];
+
+            try { apiAppointments = await apiJson('/api/Appointments'); } catch(e) { apiAppointments = []; }
+
+            const apiBookings = apiAppointments.map(a => {
+                const customerAccount = displayCustomerAccount(a.customerAccount || a.CustomerAccount || a.customerPhone || a.CustomerPhone || a.customerEmail || a.CustomerEmail || '');
+                const customerName = a.customerName || a.CustomerName || 'Khách hàng';
+                return {
+                    id: 'SQL_APP_' + (a.appointmentId || a.AppointmentId || a.id || a.Id),
+                    appointmentId: a.appointmentId || a.AppointmentId || a.id || a.Id,
+                    ownerUser: normalizeUserKey(customerAccount || customerName),
+                    customerAccount,
+                    customerName,
+                    customerEmail: a.customerEmail || a.CustomerEmail || '',
+                    type: a.type || a.Type || 'Lịch hẹn dịch vụ',
+                    carService: a.serviceName || a.ServiceName || a.carInfo || a.CarInfo || 'Dịch vụ sửa chữa',
+                    date: a.date || a.Date || a.appointmentDate || a.AppointmentDate || '',
+                    note: a.note || a.Note || '',
+                    status: a.status || a.Status || 'Chờ xác nhận',
+                    rejectionReason: a.rejectionReason || a.RejectionReason || '',
+                    rejectedAt: a.rejectedAt || a.RejectedAt || '',
+                    createdAt: a.createdAt || a.CreatedAt || ''
+                };
+            });
+
+            const byId = new Map();
+            localBookings.forEach(b => byId.set(String(b.id), b));
+            apiBookings.forEach(b => byId.set(String(b.id), { ...(byId.get(String(b.id)) || {}), ...b, sqlSynced: true }));
+            const myBookings = Array.from(byId.values()).filter(b => isMine(b));
 
             if(myBookings.length === 0) {
                 container.innerHTML = `<div style="text-align:center; color:var(--text-muted); padding:30px 10px;">
@@ -847,7 +1112,7 @@
 
             container.innerHTML = myBookings.reverse().map(b => {
                 const badgeClass = getBookingBadgeClass(b.status);
-                const isRejected = String(b.status || '').includes('từ chối') || String(b.status || '').includes('Từ chối');
+                const isRejected = String(b.status || '').toLowerCase().includes('từ chối');
                 const reasonHtml = isRejected
                     ? `<div class="reject-reason-box"><b>Lý do từ chối:</b><br>${b.rejectionReason || 'Admin/Nhân viên chưa nhập lý do.'}</div>`
                     : '';
@@ -855,7 +1120,7 @@
                     <div style="display:flex; justify-content:space-between; gap:14px; align-items:flex-start;">
                         <div>
                             <b style="font-size:16px; color:var(--text-main);">${b.type || 'Lịch hẹn dịch vụ'}</b>
-                            <p style="color:var(--text-muted); margin-top:6px;"><i class="fa-regular fa-clock"></i> ${b.date || 'Chưa có ngày hẹn'}</p>
+                            <p style="color:var(--text-muted); margin-top:6px;"><i class="fa-regular fa-clock"></i> ${formatDateSafe(b.date) || 'Chưa có ngày hẹn'}</p>
                             <p style="color:var(--text-muted); margin-top:6px;"><i class="fa-solid fa-car"></i> ${b.carService || 'Chưa chọn xe/dịch vụ'}</p>
                             ${b.note ? `<p style="color:var(--text-muted); margin-top:6px;"><i class="fa-solid fa-note-sticky"></i> ${b.note}</p>` : ''}
                         </div>
@@ -867,11 +1132,84 @@
         }
 
         // 6. HIỂN THỊ LỊCH SỬ ĐƠN HÀNG
-        function loadOrders() {
-            const orders = JSON.parse(localStorage.getItem('db_order')) || [];
+        async function loadOrders() {
             const container = document.getElementById('user-orders');
-            const myOrders = orders.filter(o => isMine(o));
+            if(!container) return;
 
+            let localOrders = JSON.parse(localStorage.getItem('db_order')) || [];
+            let apiInvoices = [];
+            let apiPayments = [];
+
+            try { apiInvoices = await apiJson('/api/Invoices'); } catch(e) { apiInvoices = []; }
+            try { apiPayments = await apiJson('/api/Payments'); } catch(e) { apiPayments = []; }
+
+            const fromSql = [];
+            apiInvoices.forEach(inv => {
+                const payments = inv.payments || inv.Payments || [];
+                const latestPayment = payments[0] || {};
+                const localOrderId = inv.localOrderId || inv.LocalOrderId || latestPayment.localOrderId || latestPayment.LocalOrderId || '';
+                const customerAccount = displayCustomerAccount(inv.customerAccount || inv.CustomerAccount || latestPayment.customerAccount || latestPayment.CustomerAccount || '');
+                const customerName = inv.customerName || inv.CustomerName || latestPayment.customerName || latestPayment.CustomerName || 'Khách hàng';
+                const serviceName = inv.serviceName || inv.ServiceName || latestPayment.serviceName || latestPayment.ServiceName || 'Hóa đơn dịch vụ';
+                const latestPaymentStatus = inv.latestPaymentStatus || inv.LatestPaymentStatus || latestPayment.status || latestPayment.Status || '';
+                const rejectReason = inv.rejectReason || inv.RejectReason || latestPayment.rejectReason || latestPayment.RejectReason || '';
+
+                fromSql.push({
+                    id: localOrderId || ('SQL_HD_' + (inv.invoiceId || inv.InvoiceId || inv.id || inv.Id)),
+                    invoiceId: inv.invoiceId || inv.InvoiceId || inv.id || inv.Id,
+                    paymentId: inv.latestPaymentId || inv.LatestPaymentId || latestPayment.paymentId || latestPayment.PaymentId,
+                    ownerUser: normalizeUserKey(customerAccount || customerName),
+                    customerAccount,
+                    customerName,
+                    f1: serviceName,
+                    f2: customerName,
+                    f3: inv.totalAmount || inv.TotalAmount || inv.amount || inv.Amount || 0,
+                    f4: inv.createdAt || inv.CreatedAt || '',
+                    status: inv.status || inv.Status || inv.invoiceStatus || inv.InvoiceStatus || 'Chưa thanh toán',
+                    paymentStatus: latestPaymentStatus,
+                    paymentMethod: inv.latestPaymentMethod || inv.LatestPaymentMethod || latestPayment.paymentMethod || latestPayment.PaymentMethod || '',
+                    requestedAt: latestPayment.paymentDate || latestPayment.PaymentDate || '',
+                    paidAt: latestPayment.confirmedAt || latestPayment.ConfirmedAt || '',
+                    rejectionReason: rejectReason
+                });
+            });
+
+            // Nếu API Payments có giao dịch chưa nằm trong /api/Invoices thì merge thêm.
+            apiPayments.forEach(p => {
+                const localOrderId = p.localOrderId || p.LocalOrderId || '';
+                const exists = fromSql.find(o => String(o.paymentId) === String(p.paymentId || p.PaymentId) || (localOrderId && String(o.id) === String(localOrderId)));
+                if(exists) return;
+
+                const customerAccount = displayCustomerAccount(p.customerAccount || p.CustomerAccount || '');
+                const customerName = p.customerName || p.CustomerName || 'Khách hàng';
+                fromSql.push({
+                    id: localOrderId || ('SQL_PAY_' + (p.paymentId || p.PaymentId)),
+                    invoiceId: p.invoiceId || p.InvoiceId,
+                    paymentId: p.paymentId || p.PaymentId,
+                    ownerUser: normalizeUserKey(customerAccount || customerName),
+                    customerAccount,
+                    customerName,
+                    f1: p.serviceName || p.ServiceName || 'Hóa đơn dịch vụ',
+                    f2: customerName,
+                    f3: p.amount || p.Amount || 0,
+                    f4: p.paymentDate || p.PaymentDate || '',
+                    status: p.status || p.Status || 'Chờ xác nhận thanh toán QR',
+                    paymentStatus: p.status || p.Status || '',
+                    paymentMethod: p.paymentMethod || p.PaymentMethod || '',
+                    requestedAt: p.paymentDate || p.PaymentDate || '',
+                    paidAt: p.confirmedAt || p.ConfirmedAt || '',
+                    rejectionReason: p.rejectReason || p.RejectReason || ''
+                });
+            });
+
+            // Ưu tiên dữ liệu SQL, nhưng vẫn giữ localStorage làm dự phòng cho hóa đơn chưa sync.
+            const byId = new Map();
+            localOrders.forEach(o => byId.set(String(o.id), o));
+            fromSql.forEach(o => byId.set(String(o.id), { ...(byId.get(String(o.id)) || {}), ...o, sqlSynced: true }));
+            const orders = Array.from(byId.values());
+            window.latestCustomerOrdersCache = orders;
+
+            const myOrders = orders.filter(o => isMine(o));
             if(myOrders.length === 0) {
                 container.innerHTML = `<div class="card" style="text-align: center; color: var(--text-muted); padding: 60px;">
                     <i class="fa-solid fa-receipt" style="font-size: 50px; color: #cbd5e1; margin-bottom: 20px;"></i>
@@ -884,14 +1222,17 @@
             container.innerHTML = myOrders.reverse().map(ord => {
                 const st = String(ord.status || '').toLowerCase();
                 const paySt = String(ord.paymentStatus || '').toLowerCase();
-                const isPaid = st.includes('đã') || st.includes('hoàn tất') || paySt.includes('đã được');
-                const isPendingQr = st.includes('chờ xác nhận thanh toán qr') || paySt.includes('chờ admin');
-                const isUnpaid = !isPaid && !isPendingQr;
-                let statusColor = isPaid ? 'var(--success)' : (isPendingQr ? 'var(--warning)' : 'var(--danger)');
+                const isRejected = st.includes('từ chối') || paySt.includes('từ chối') || st.includes('hủy') || paySt.includes('hủy');
+                const isPaid = !isRejected && (st.includes('đã thanh toán') || st.includes('hoàn tất') || paySt.includes('đã xác nhận') || paySt.includes('đã thanh toán'));
+                const isPendingQr = !isPaid && !isRejected && (st.includes('chờ xác nhận thanh toán qr') || st.includes('chờ xác nhận') || paySt.includes('chờ xác nhận') || paySt.includes('chờ admin'));
+                const isUnpaid = !isPaid && !isPendingQr && !isRejected;
+
+                let statusColor = isPaid ? 'var(--success)' : (isPendingQr ? 'var(--warning)' : (isRejected ? 'var(--danger)' : 'var(--danger)'));
                 let statusBg = isPaid ? '#dcfce7' : (isPendingQr ? 'var(--orange-light)' : '#fee2e2');
-                let statusIcon = isPaid ? 'fa-circle-check' : (isPendingQr ? 'fa-clock-rotate-left' : 'fa-qrcode');
-                let statusText = isPaid ? 'ĐÃ HOÀN TẤT' : (isPendingQr ? 'CHỜ XÁC NHẬN QR' : 'CHƯA THANH TOÁN');
+                let statusIcon = isPaid ? 'fa-circle-check' : (isPendingQr ? 'fa-clock-rotate-left' : (isRejected ? 'fa-circle-xmark' : 'fa-qrcode'));
+                let statusText = isPaid ? 'ĐÃ HOÀN TẤT' : (isPendingQr ? 'CHỜ ADMIN XÁC NHẬN QR' : (isRejected ? 'ĐÃ TỪ CHỐI' : 'CHƯA THANH TOÁN'));
                 const payButton = isUnpaid ? `<button onclick="payInvoiceById('${ord.id}')" style="margin-top:10px; border:none; background:var(--primary); color:white; padding:10px 14px; border-radius:10px; font-weight:900; cursor:pointer;"><i class="fa-solid fa-qrcode"></i> Thanh toán QR</button>` : '';
+                const reasonHtml = isRejected && ord.rejectionReason ? `<div class="reject-reason-box" style="margin-top:10px;"><b>Lý do từ chối:</b><br>${ord.rejectionReason}</div>` : '';
 
                 return `
                 <div class="order-card">
@@ -900,33 +1241,55 @@
                             <i class="fa-solid fa-file-invoice-dollar"></i>
                         </div>
                         <div>
-                            <span style="font-weight: 800; color: var(--text-main); font-size: 17px; display: block; margin-bottom: 5px;">${ord.f1}</span>
-                            <p style="font-size: 13px; color: var(--text-muted); font-weight: 500;"><i class="fa-regular fa-calendar" style="margin-right: 5px;"></i> Ngày tạo: ${ord.f4}</p>
+                            <span style="font-weight: 800; color: var(--text-main); font-size: 17px; display: block; margin-bottom: 5px;">${ord.f1 || ord.serviceName || 'Hóa đơn dịch vụ'}</span>
+                            <p style="font-size: 13px; color: var(--text-muted); font-weight: 500;"><i class="fa-regular fa-calendar" style="margin-right: 5px;"></i> Ngày tạo: ${formatDateSafe(ord.f4)}</p>
                             ${ord.paymentMethod ? `<p style="font-size: 13px; color: var(--primary); font-weight: 800; margin-top: 4px;"><i class="fa-solid fa-building-columns" style="margin-right: 5px;"></i> ${ord.paymentMethod}</p>` : ''}
-                            ${ord.paymentStatus ? `<p style="font-size: 13px; color: var(--success); font-weight: 800; margin-top: 4px;"><i class="fa-solid fa-circle-check" style="margin-right: 5px;"></i> ${ord.paymentStatus}</p>` : ''}
-                            ${ord.paidAt ? `<p style="font-size: 12px; color: var(--text-muted); font-weight: 600; margin-top: 4px;">Thanh toán lúc: ${ord.paidAt}</p>` : ''}
-                            ${ord.requestedAt ? `<p style="font-size: 12px; color: var(--text-muted); font-weight: 600; margin-top: 4px;">Gửi xác nhận lúc: ${ord.requestedAt}</p>` : ''}
+                            ${ord.paymentStatus ? `<p style="font-size: 13px; color: ${isRejected ? 'var(--danger)' : (isPaid ? 'var(--success)' : 'var(--warning)')}; font-weight: 800; margin-top: 4px;"><i class="fa-solid ${isPaid ? 'fa-circle-check' : (isRejected ? 'fa-circle-xmark' : 'fa-clock-rotate-left')}" style="margin-right: 5px;"></i> ${ord.paymentStatus}</p>` : ''}
+                            ${ord.paidAt ? `<p style="font-size: 12px; color: var(--text-muted); font-weight: 600; margin-top: 4px;">Xác nhận lúc: ${formatDateSafe(ord.paidAt)}</p>` : ''}
+                            ${ord.requestedAt ? `<p style="font-size: 12px; color: var(--text-muted); font-weight: 600; margin-top: 4px;">Gửi xác nhận lúc: ${formatDateSafe(ord.requestedAt)}</p>` : ''}
+                            ${reasonHtml}
                         </div>
                     </div>
                     <div style="text-align: right;">
-                        <b style="display: block; font-size: 22px; font-weight: 900; color: var(--primary); margin-bottom: 8px;">${Number(ord.f3).toLocaleString('vi-VN')}đ</b>
+                        <b style="display: block; font-size: 22px; font-weight: 900; color: var(--primary); margin-bottom: 8px;">${Number(ord.f3 || 0).toLocaleString('vi-VN')}đ</b>
                         <span style="font-size: 11px; color: ${statusColor}; font-weight: 800; display: inline-block; background: ${statusBg}; padding: 6px 12px; border-radius: 8px; letter-spacing: 0.5px;">
                             <i class="fa-solid ${statusIcon}" style="margin-right: 4px;"></i> ${statusText}
                         </span>
                         ${payButton}
                     </div>
-                </div>
-            `}).join('');
+                </div>`;
+            }).join('');
+        }
+
+        function formatDateSafe(value) {
+            if(!value) return 'Chưa có';
+            const d = new Date(value);
+            if(!isNaN(d.getTime())) return d.toLocaleString('vi-VN');
+            return value;
         }
 
 
 
         function payInvoiceById(orderId) {
-            const orders = JSON.parse(localStorage.getItem('db_order')) || [];
-            const invoice = orders.find(o => String(o.id) === String(orderId) && isMine(o));
-            if(!invoice) return alert('Không tìm thấy hóa đơn của bạn.');
-            if(Number(invoice.f3) <= 0) return alert('Hóa đơn này chưa có số tiền chính thức, vui lòng chờ gara cập nhật.');
-            openQrPayment(invoice);
+            const localOrders = JSON.parse(localStorage.getItem('db_order')) || [];
+            const cachedOrders = Array.isArray(window.latestCustomerOrdersCache) ? window.latestCustomerOrdersCache : [];
+            const allOrders = [...cachedOrders, ...localOrders];
+
+            const invoice = allOrders.find(o =>
+                String(o.id) === String(orderId) ||
+                String(o.invoiceId || '') === String(orderId) ||
+                String(o.paymentId || '') === String(orderId)
+            );
+
+            if(!invoice || !isMine(invoice)) return alert('Không tìm thấy hóa đơn của bạn.');
+            const amount = Number(invoice.f3 || invoice.totalAmount || invoice.amount || 0);
+            if(amount <= 0) return alert('Hóa đơn này chưa có số tiền chính thức, vui lòng chờ gara cập nhật.');
+
+            openQrPayment({
+                ...invoice,
+                id: invoice.id || invoice.localOrderId || ('SQL_HD_' + (invoice.invoiceId || invoice.paymentId || Date.now())),
+                f3: amount
+            });
         }
 
         // 7. CẬP NHẬT THỐNG KÊ HOẠT ĐỘNG

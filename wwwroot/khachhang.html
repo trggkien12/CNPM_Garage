@@ -241,6 +241,81 @@
         footer { background: var(--surface); border-top: 1px solid var(--border); padding: 70px 5% 40px; display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 50px; margin-top: 60px; }
         .footer-title { font-weight: 800; margin-bottom: 20px; font-size: 18px; color: var(--text-main);}
         .footer-text { color: var(--text-muted); font-size: 15px; line-height: 1.8; font-weight: 500;}
+
+        /* --- FIX MOBILE RESPONSIVE: chỉ chỉnh tỷ lệ mobile, không đổi QR/ngân hàng --- */
+        @media (max-width: 768px) {
+            body { overflow-x: hidden; padding-top: 0; }
+            header {
+                position: sticky;
+                top: 0;
+                z-index: 1000;
+                height: auto;
+                min-height: 74px;
+                padding: 10px 12px;
+                display: flex;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 10px;
+            }
+            .logo { justify-content: center; margin: 0 auto; }
+            .logo img { width: 48px; height: 48px; }
+            .logo span { font-size: 24px; }
+            nav {
+                width: 100%;
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 8px;
+                overflow: visible;
+            }
+            nav button {
+                width: 100%;
+                min-width: 0;
+                height: auto;
+                padding: 10px 8px;
+                border-radius: 14px;
+                font-size: 13px;
+                line-height: 1.25;
+                justify-content: center;
+                white-space: normal;
+            }
+            .user-area {
+                width: 100%;
+                justify-content: center;
+                flex-wrap: wrap;
+                border-left: none;
+                padding-left: 0;
+            }
+            main, .container, .section {
+                width: 100%;
+                max-width: 100%;
+                padding-left: 12px !important;
+                padding-right: 12px !important;
+                margin-left: 0 !important;
+                margin-right: 0 !important;
+            }
+            .grid, .option-grid, .stats-grid, .mycar-grid { grid-template-columns: 1fr !important; }
+            .item-card, .card, .mycar-card, .booking-history-card, .order-card { width: 100%; max-width: 100%; }
+            .order-card { flex-direction: column; align-items: stretch; gap: 18px; padding: 18px; }
+            .order-card > div:first-child { width: 100%; align-items: flex-start !important; }
+            .order-card > div:last-child { width: 100%; text-align: left !important; }
+            .order-card > div:last-child b { font-size: 24px !important; }
+            .order-card button { width: 100%; margin-top: 12px !important; }
+            .qr-box { width: calc(100vw - 24px); max-height: 92vh; overflow-y: auto; border-radius: 18px; }
+            .qr-body { padding: 18px; }
+            .qr-img-wrap { width: min(260px, 82vw); height: min(260px, 82vw); }
+            .qr-row { font-size: 13px; align-items: flex-start; }
+            .qr-value { max-width: 58%; word-break: break-word; }
+            .qr-actions { grid-template-columns: 1fr; }
+            footer { grid-template-columns: 1fr; padding: 35px 18px; gap: 24px; }
+        }
+
+        @media (max-width: 420px) {
+            nav { grid-template-columns: 1fr; }
+            nav button { font-size: 12px; }
+            .order-card { padding: 14px; }
+            .item-content { padding: 18px; }
+        }
+
     </style>
 </head>
 <body>
@@ -267,7 +342,7 @@
             
             <div class="user-info">
                 <b id="nav-name">Đang tải...</b>
-                <span><i class="fa-solid fa-crown"></i> VIP Member</span>
+                
             </div>
             <a class="btn-logout" onclick="logoutCustomer()" title="Đăng xuất">
                 <i class="fa-solid fa-right-from-bracket"></i>
