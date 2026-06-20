@@ -34,6 +34,10 @@ namespace AutoGarageManager.Data
         public DbSet<Payment> Payments { get; set; }
 
         public DbSet<Appointment> Appointments { get; set; }
+
+        public DbSet<AppointmentService> AppointmentServices { get; set; }
+
+        public DbSet<EmailOtp> EmailOtps { get; set; }
         
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -91,6 +95,23 @@ namespace AutoGarageManager.Data
             modelBuilder.Entity<Appointment>()
                 .HasIndex(a => a.AppointmentDate)
                 .HasDatabaseName("idx_appointments_appointment_date");
+
+
+            modelBuilder.Entity<AppointmentService>()
+                .HasOne(x => x.Appointment)
+                .WithMany(x => x.AppointmentServices)
+                .HasForeignKey(x => x.AppointmentId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<AppointmentService>()
+                .HasOne(x => x.Service)
+                .WithMany()
+                .HasForeignKey(x => x.ServiceId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<AppointmentService>()
+                .HasIndex(x => x.AppointmentId)
+                .HasDatabaseName("idx_appointment_services_appointment_id");
 
             modelBuilder.Entity<Payment>()
                 .HasIndex(p => p.InvoiceId)

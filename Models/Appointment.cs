@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
 
@@ -35,5 +36,8 @@ namespace AutoGarageManager.Models
 
         [JsonIgnore]
         public Car? Car { get; set; }
+
+        [JsonIgnore]
+        public ICollection<AppointmentService> AppointmentServices { get; set; } = new List<AppointmentService>();
     }
 }

@@ -3,9 +3,11 @@ using Microsoft.EntityFrameworkCore;
 using AutoGarageManager.Data;
 using AutoGarageManager.Models;
 using AutoGarageManager.DTOs;
+using AutoGarageManager.Helpers;
+using AutoGarageManager.Services;
 using System.Collections.Concurrent;
-using System.Text.RegularExpressions;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 
 namespace AutoGarageManager.Controllers
 {
@@ -14,11 +16,17 @@ namespace AutoGarageManager.Controllers
     public class AuthController : ControllerBase
     {
         private readonly GarageDbContext _context;
+        private readonly JwtTokenService _jwtTokenService;
+        private readonly IConfiguration _configuration;
+        private readonly IEmailService _emailService;
         private static readonly ConcurrentDictionary<string, (int Count, DateTime LockUntil)> LoginFailures = new();
 
-        public AuthController(GarageDbContext context)
+        public AuthController(GarageDbContext context, JwtTokenService jwtTokenService, IConfiguration configuration, IEmailService emailService)
         {
             _context = context;
+            _jwtTokenService = jwtTokenService;
+            _configuration = configuration;
+            _emailService = emailService;
         }
 
         [HttpPost("register")]
@@ -28,9 +36,12 @@ namespace AutoGarageManager.Controllers
                 return BadRequest(ApiResponse.Failure("Dữ liệu đăng ký không hợp lệ", ModelState));
 
             request.FullName = request.FullName.Trim();
-            request.Email = string.IsNullOrWhiteSpace(request.Email) ? $"{request.PhoneNumber}@khachhang.com" : request.Email.Trim().ToLower();
+            request.Email = request.Email.Trim().ToLower();
             request.PhoneNumber = request.PhoneNumber.Trim();
             request.Address = request.Address?.Trim() ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(request.Email) || !request.Email.Contains('@'))
+                return BadRequest(ApiResponse.Failure("Vui lòng nhập email thật để nhận mã OTP"));
 
             var existed = await _context.Customers.AnyAsync(c => c.Email == request.Email || c.PhoneNumber == request.PhoneNumber);
             if (existed)
@@ -42,20 +53,104 @@ namespace AutoGarageManager.Controllers
                 Email = request.Email,
                 PhoneNumber = request.PhoneNumber,
                 Address = request.Address,
-                Password = HashPassword(request.Password)
+                Password = PasswordHasher.HashPassword(request.Password),
+                IsEmailVerified = false
             };
 
             _context.Customers.Add(newCustomer);
             await _context.SaveChangesAsync();
 
+            await CreateAndSendOtpAsync(request.Email, "REGISTER", "Mã OTP xác thực đăng ký Auto Garage");
+
             return Ok(ApiResponse.SuccessResponse(new
             {
-                newCustomer.Id,
-                newCustomer.FullName,
-                newCustomer.Email,
-                newCustomer.PhoneNumber,
-                newCustomer.Address
-            }, "Đăng ký thành công"));
+                email = newCustomer.Email,
+                requireEmailVerification = true
+            }, "Đăng ký thành công. Vui lòng kiểm tra email để lấy mã OTP xác thực."));
+        }
+
+        [HttpPost("verify-register-otp")]
+        public async Task<IActionResult> VerifyRegisterOtp([FromBody] VerifyEmailOtpDto request)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ApiResponse.Failure("Dữ liệu OTP không hợp lệ", ModelState));
+
+            var email = request.Email.Trim().ToLower();
+            var otp = request.Otp.Trim();
+
+            var customer = await _context.Customers.FirstOrDefaultAsync(c => c.Email == email);
+            if (customer == null)
+                return NotFound(ApiResponse.Failure("Không tìm thấy tài khoản với email này"));
+
+            if (customer.IsEmailVerified)
+                return Ok(ApiResponse.SuccessResponse(null, "Email đã được xác thực trước đó. Bạn có thể đăng nhập."));
+
+            var otpCode = await FindValidOtpAsync(email, otp, "REGISTER");
+            if (otpCode == null)
+                return BadRequest(ApiResponse.Failure("OTP không đúng, đã dùng hoặc đã hết hạn"));
+
+            otpCode.IsUsed = true;
+            customer.IsEmailVerified = true;
+            await _context.SaveChangesAsync();
+
+            return Ok(ApiResponse.SuccessResponse(null, "Xác thực email thành công. Vui lòng quay lại trang đăng nhập."));
+        }
+
+        [HttpPost("resend-register-otp")]
+        public async Task<IActionResult> ResendRegisterOtp([FromBody] ForgotPasswordDto request)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ApiResponse.Failure("Email không hợp lệ", ModelState));
+
+            var email = request.Email.Trim().ToLower();
+            var customer = await _context.Customers.FirstOrDefaultAsync(c => c.Email == email);
+            if (customer == null)
+                return NotFound(ApiResponse.Failure("Không tìm thấy tài khoản với email này"));
+
+            if (customer.IsEmailVerified)
+                return BadRequest(ApiResponse.Failure("Email đã được xác thực. Bạn có thể đăng nhập."));
+
+            await CreateAndSendOtpAsync(email, "REGISTER", "Mã OTP xác thực đăng ký Auto Garage");
+            return Ok(ApiResponse.SuccessResponse(null, "Đã gửi lại OTP về email."));
+        }
+
+        [HttpPost("forgot-password")]
+        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordDto request)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ApiResponse.Failure("Email không hợp lệ", ModelState));
+
+            var email = request.Email.Trim().ToLower();
+            var customer = await _context.Customers.FirstOrDefaultAsync(c => c.Email == email);
+            if (customer == null)
+                return NotFound(ApiResponse.Failure("Email chưa được đăng ký trong hệ thống"));
+
+            await CreateAndSendOtpAsync(email, "FORGOT_PASSWORD", "Mã OTP đặt lại mật khẩu Auto Garage");
+            return Ok(ApiResponse.SuccessResponse(null, "Đã gửi OTP đặt lại mật khẩu về email."));
+        }
+
+        [HttpPost("reset-password-with-otp")]
+        public async Task<IActionResult> ResetPasswordWithOtp([FromBody] ResetPasswordWithOtpDto request)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ApiResponse.Failure("Dữ liệu đặt lại mật khẩu không hợp lệ", ModelState));
+
+            var email = request.Email.Trim().ToLower();
+            var otp = request.Otp.Trim();
+            var customer = await _context.Customers.FirstOrDefaultAsync(c => c.Email == email);
+            if (customer == null)
+                return NotFound(ApiResponse.Failure("Email chưa được đăng ký trong hệ thống"));
+
+            var otpCode = await FindValidOtpAsync(email, otp, "FORGOT_PASSWORD");
+            if (otpCode == null)
+                return BadRequest(ApiResponse.Failure("OTP không đúng, đã dùng hoặc đã hết hạn"));
+
+            customer.Password = PasswordHasher.HashPassword(request.NewPassword);
+            customer.IsEmailVerified = true;
+            otpCode.IsUsed = true;
+            await _context.SaveChangesAsync();
+
+            return Ok(ApiResponse.SuccessResponse(null, "Đổi mật khẩu thành công. Vui lòng đăng nhập lại."));
         }
 
         [HttpPost("logout")]
@@ -68,97 +163,132 @@ namespace AutoGarageManager.Controllers
         public async Task<IActionResult> Login([FromBody] LoginDto request)
         {
             if (!ModelState.IsValid)
-                return BadRequest(new { message = "Vui lòng nhập đầy đủ tài khoản và mật khẩu", errors = ModelState });
+                return BadRequest(ApiResponse.Failure("Vui lòng nhập đầy đủ tài khoản và mật khẩu", ModelState));
 
             var rawUsername = request.Username ?? string.Empty;
             var username = rawUsername.Trim();
             var password = request.Password ?? string.Empty;
 
             if (rawUsername != username)
-                return BadRequest(new { message = "Số điện thoại/tài khoản không được có khoảng trắng ở đầu hoặc cuối" });
+                return BadRequest(ApiResponse.Failure("Email/số điện thoại/tài khoản không được có khoảng trắng ở đầu hoặc cuối"));
 
             if (username.Contains(' '))
-                return BadRequest(new { message = "Số điện thoại/tài khoản không được có khoảng trắng ở giữa" });
+                return BadRequest(ApiResponse.Failure("Email/số điện thoại/tài khoản không được có khoảng trắng ở giữa"));
 
             if (username != "admin" && !username.Contains('@') && !Regex.IsMatch(username, @"^0\d{9,10}$"))
-                return BadRequest(new { message = "Số điện thoại sai định dạng" });
+                return BadRequest(ApiResponse.Failure("Email hoặc số điện thoại sai định dạng"));
 
             var lockKey = username.ToLower();
             if (LoginFailures.TryGetValue(lockKey, out var state) && state.LockUntil > DateTime.UtcNow)
-                return StatusCode(429, new { message = "Bạn nhập sai quá nhiều lần. Vui lòng thử lại sau 1 phút" });
+                return StatusCode(429, ApiResponse.Failure("Bạn nhập sai quá nhiều lần. Vui lòng thử lại sau 1 phút"));
 
-            if (username == "admin" && password == "123456")
+            var adminUsername = _configuration["AdminAccount:Username"] ?? "admin";
+            var adminPassword = _configuration["AdminAccount:Password"] ?? "123456";
+            if (username.Equals(adminUsername, StringComparison.OrdinalIgnoreCase) && password == adminPassword)
             {
                 LoginFailures.TryRemove(lockKey, out _);
-                return Ok(new
+                var token = _jwtTokenService.GenerateToken(0, "admin", "Quản trị viên", "admin");
+                return Ok(ApiResponse.SuccessResponse(new
                 {
-                    message = "Đăng nhập Admin thành công",
-                    user = new { name = "Quản trị viên", role = "admin", user = "admin" },
+                    token,
+                    user = new { id = 0, name = "Quản trị viên", role = "admin", user = "admin", email = "admin" },
                     rememberMe = request.RememberMe
-                });
+                }, "Đăng nhập Admin thành công"));
             }
 
-            var customer = await _context.Customers
-                .FirstOrDefaultAsync(c => c.Email == username || c.PhoneNumber == username);
+            var lowerUsername = username.ToLower();
+            var customer = await _context.Customers.FirstOrDefaultAsync(c => c.Email.ToLower() == lowerUsername || c.PhoneNumber == username);
 
-            if (customer != null && VerifyPassword(password, customer.Password))
+            if (customer != null && PasswordHasher.VerifyPassword(password, customer.Password))
             {
-                // Nếu là mật khẩu cũ dạng plain text, nâng cấp sang PBKDF2 sau khi đăng nhập thành công.
-                if (!IsHashedPassword(customer.Password))
+                if (!PasswordHasher.IsHashedPassword(customer.Password))
                 {
-                    customer.Password = HashPassword(password);
+                    customer.Password = PasswordHasher.HashPassword(password);
                     await _context.SaveChangesAsync();
                 }
 
-                LoginFailures.TryRemove(lockKey, out _);
-                return Ok(new
+                if (!customer.IsEmailVerified)
                 {
-                    message = "Đăng nhập Khách hàng thành công",
-                    user = new { id = customer.Id, name = customer.FullName, role = "customer", user = customer.Email, phone = customer.PhoneNumber, phoneNumber = customer.PhoneNumber },
+                    return BadRequest(ApiResponse.Failure("Email chưa xác thực. Vui lòng nhập OTP đã gửi về email.", new
+                    {
+                        requireEmailVerification = true,
+                        email = customer.Email
+                    }));
+                }
+
+                LoginFailures.TryRemove(lockKey, out _);
+                var token = _jwtTokenService.GenerateToken(customer.Id, customer.Email, customer.FullName, "customer");
+                return Ok(ApiResponse.SuccessResponse(new
+                {
+                    token,
+                    user = new
+                    {
+                        id = customer.Id,
+                        name = customer.FullName,
+                        fullName = customer.FullName,
+                        role = "customer",
+                        user = customer.Email,
+                        email = customer.Email,
+                        phone = customer.PhoneNumber,
+                        phoneNumber = customer.PhoneNumber,
+                        address = customer.Address
+                    },
                     rememberMe = request.RememberMe
-                });
+                }, "Đăng nhập Khách hàng thành công"));
             }
 
-            var nextCount = 1;
-            if (LoginFailures.TryGetValue(lockKey, out var oldState))
-                nextCount = oldState.Count + 1;
-
+            var nextCount = LoginFailures.TryGetValue(lockKey, out var oldState) ? oldState.Count + 1 : 1;
             var lockUntil = nextCount >= 5 ? DateTime.UtcNow.AddMinutes(1) : DateTime.MinValue;
             LoginFailures[lockKey] = (nextCount, lockUntil);
 
-            return BadRequest(new { message = "Sai tài khoản hoặc mật khẩu", failedCount = nextCount });
-        }
-        private static bool IsHashedPassword(string? stored)
-        {
-            return !string.IsNullOrWhiteSpace(stored) && stored.StartsWith("PBKDF2$", StringComparison.Ordinal);
+            return BadRequest(ApiResponse.Failure("Sai tài khoản hoặc mật khẩu", new { failedCount = nextCount }));
         }
 
-        private static string HashPassword(string password)
+        private async Task CreateAndSendOtpAsync(string email, string purpose, string subject)
         {
-            var salt = RandomNumberGenerator.GetBytes(16);
-            var hash = Rfc2898DeriveBytes.Pbkdf2(password, salt, 100_000, HashAlgorithmName.SHA256, 32);
-            return $"PBKDF2$100000${Convert.ToBase64String(salt)}${Convert.ToBase64String(hash)}";
-        }
+            var normalizedEmail = email.Trim().ToLower();
+            var code = RandomNumberGenerator.GetInt32(100000, 999999).ToString();
 
-        private static bool VerifyPassword(string password, string stored)
-        {
-            if (string.IsNullOrEmpty(stored)) return false;
+            var oldOtps = await _context.EmailOtps
+                .Where(x => x.Email == normalizedEmail && x.Purpose == purpose && !x.IsUsed)
+                .ToListAsync();
+            foreach (var old in oldOtps)
+                old.IsUsed = true;
 
-            if (!IsHashedPassword(stored))
+            var otp = new EmailOtp
             {
-                return stored == password;
-            }
+                Email = normalizedEmail,
+                Code = code,
+                Purpose = purpose,
+                ExpiresAt = DateTime.Now.AddMinutes(5),
+                IsUsed = false
+            };
+            _context.EmailOtps.Add(otp);
+            await _context.SaveChangesAsync();
 
-            var parts = stored.Split('$');
-            if (parts.Length != 4) return false;
+            var html = $@"
+                <div style='font-family:Arial,sans-serif;max-width:520px;margin:auto;border:1px solid #e5e7eb;border-radius:14px;padding:24px'>
+                    <h2 style='color:#2563eb;margin-top:0'>Auto Garage</h2>
+                    <p>Xin chào,</p>
+                    <p>Mã OTP của bạn là:</p>
+                    <div style='font-size:32px;font-weight:800;letter-spacing:6px;background:#f1f5f9;border-radius:12px;padding:16px;text-align:center;color:#111827'>{code}</div>
+                    <p style='margin-top:18px'>Mã có hiệu lực trong <b>5 phút</b>. Vui lòng không chia sẻ mã này cho người khác.</p>
+                </div>";
 
-            if (!int.TryParse(parts[1], out var iterations)) return false;
-
-            var salt = Convert.FromBase64String(parts[2]);
-            var expected = Convert.FromBase64String(parts[3]);
-            var actual = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA256, expected.Length);
-            return CryptographicOperations.FixedTimeEquals(actual, expected);
+            await _emailService.SendEmailAsync(normalizedEmail, subject, html);
         }
 
+        private async Task<EmailOtp?> FindValidOtpAsync(string email, string otp, string purpose)
+        {
+            var normalizedEmail = email.Trim().ToLower();
+            return await _context.EmailOtps
+                .Where(x => x.Email == normalizedEmail
+                    && x.Code == otp
+                    && x.Purpose == purpose
+                    && !x.IsUsed
+                    && x.ExpiresAt > DateTime.Now)
+                .OrderByDescending(x => x.CreatedAt)
+                .FirstOrDefaultAsync();
+        }
     }
 }

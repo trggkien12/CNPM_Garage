@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using AutoGarageManager.Data;
 using AutoGarageManager.DTOs;
@@ -7,6 +8,7 @@ using AutoGarageManager.Models;
 namespace AutoGarageManager.Controllers
 {
     [ApiController]
+    [Authorize]
     [Route("api/[controller]")]
     public class PaymentsController : ControllerBase
     {
@@ -146,8 +148,8 @@ namespace AutoGarageManager.Controllers
             if (remaining <= 0 || invoice.Status == "Đã thanh toán")
                 return BadRequest(ApiResponse.Failure("Hóa đơn này đã được thanh toán đủ, không thể thanh toán lần nữa"));
 
-            if (dto.Amount < remaining)
-                return BadRequest(ApiResponse.Failure($"Thanh toán thiếu tiền. Còn thiếu {remaining - dto.Amount:N0} VNĐ"));
+            if (dto.Amount <= 0)
+                return BadRequest(ApiResponse.Failure("Số tiền thanh toán phải lớn hơn 0"));
 
             var pendingPaymentExists = invoice.Payments.Any(p => p.Status == StatusPending && p.PaymentMethod.Contains("QR"));
             if (method.Contains("QR") && pendingPaymentExists)
@@ -174,10 +176,13 @@ namespace AutoGarageManager.Controllers
 
             await _context.SaveChangesAsync();
 
-            var changeAmount = payment.Status == StatusConfirmed ? dto.Amount - remaining : 0;
+            var paidAfter = confirmedAmount + (payment.Status == StatusConfirmed ? payment.Amount : 0);
+            var changeAmount = payment.Status == StatusConfirmed && dto.Amount > remaining ? dto.Amount - remaining : 0;
             var message = payment.Status == StatusPending
                 ? "Đã ghi nhận khách báo đã chuyển khoản. Vui lòng Admin/Nhân viên kiểm tra ngân hàng rồi xác nhận"
-                : (changeAmount > 0 ? $"Thanh toán thành công. Tiền thừa: {changeAmount:N0} VNĐ" : "Thanh toán hóa đơn thành công");
+                : paidAfter >= invoice.TotalAmount
+                    ? (changeAmount > 0 ? $"Thanh toán thành công. Tiền thừa: {changeAmount:N0} VNĐ" : "Thanh toán hóa đơn thành công")
+                    : $"Đã ghi nhận thanh toán một phần. Còn lại: {invoice.TotalAmount - paidAfter:N0} VNĐ";
 
             return Ok(ApiResponse.SuccessResponse(new
             {
@@ -190,6 +195,7 @@ namespace AutoGarageManager.Controllers
                 InvoiceTotal = invoice.TotalAmount,
                 PaidBefore = confirmedAmount,
                 RequiredAmount = remaining,
+                PaidAfter = paidAfter,
                 ChangeAmount = changeAmount,
                 InvoiceStatus = invoice.Status
             }, message));
@@ -388,7 +394,14 @@ namespace AutoGarageManager.Controllers
             var invoice = new Invoice
             {
                 RepairOrderId = order.RepairOrderId,
+                LaborAmount = dto.Amount,
+                PartAmount = 0,
+                DiscountAmount = 0,
+                VatPercent = 0,
+                VatAmount = 0,
                 TotalAmount = dto.Amount,
+                PaidAmount = 0,
+                RemainingAmount = dto.Amount,
                 Status = "Chờ xác nhận thanh toán QR",
                 CreatedAt = DateTime.Now
             };
@@ -423,7 +436,7 @@ namespace AutoGarageManager.Controllers
                 Email = string.IsNullOrWhiteSpace(cleanEmail) ? $"{Guid.NewGuid():N}@khachhang.com" : cleanEmail,
                 PhoneNumber = cleanAccount,
                 Address = "",
-                Password = "AUTO_CREATED"
+                Password = AutoGarageManager.Helpers.PasswordHasher.HashPassword(Guid.NewGuid().ToString("N"))
             };
 
             _context.Customers.Add(customer);
@@ -462,8 +475,12 @@ namespace AutoGarageManager.Controllers
             var hasPendingQr = invoice.Payments.Any(p => p.Status == StatusPending);
             var hasRejectedOrCancelled = invoice.Payments.Any(p => p.Status == StatusRejected || p.Status == StatusCancelled);
 
+            invoice.PaidAmount = confirmedAmount;
+            invoice.RemainingAmount = Math.Max(0, invoice.TotalAmount - confirmedAmount);
+
             invoice.Status = confirmedAmount >= invoice.TotalAmount
                 ? "Đã thanh toán"
+                : confirmedAmount > 0 ? "Thanh toán một phần"
                 : hasPendingQr ? "Chờ xác nhận thanh toán QR"
                 : hasRejectedOrCancelled ? "Thanh toán bị từ chối"
                 : "Chưa thanh toán";

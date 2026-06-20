@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using AutoGarageManager.Data;
 using AutoGarageManager.Models;
@@ -7,6 +8,7 @@ namespace AutoGarageManager.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize]
     public class RepairPartsController : ControllerBase
     {
         private readonly GarageDbContext _context;

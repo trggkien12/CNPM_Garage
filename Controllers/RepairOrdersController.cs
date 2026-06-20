@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using AutoGarageManager.Data;
 using AutoGarageManager.Models;
@@ -7,11 +8,12 @@ using AutoGarageManager.DTOs;
 namespace AutoGarageManager.Controllers
 {
     [ApiController]
+    [Authorize]
     [Route("api/[controller]")]
     public class RepairOrdersController : ControllerBase
     {
         private readonly GarageDbContext _context;
-        private static readonly string[] ValidStatuses = { "Chờ xử lý", "Đang sửa", "Hoàn thành", "Đã hủy" };
+        private static readonly string[] ValidStatuses = { "Chờ xử lý", "Chờ sửa", "Đang sửa", "Chờ phụ tùng", "Hoàn thành", "Đã giao xe", "Đã hủy" };
 
         public RepairOrdersController(GarageDbContext context)
         {
@@ -69,7 +71,15 @@ namespace AutoGarageManager.Controllers
             {
                 CarId = dto.CarId,
                 Status = status,
-                RepairDate = DateTime.Now
+                RepairDate = DateTime.Now,
+                ReceivedDate = dto.ReceivedDate ?? DateTime.Now,
+                EstimatedCompletionDate = dto.EstimatedCompletionDate,
+                ProblemDescription = dto.ProblemDescription?.Trim() ?? string.Empty,
+                VehicleCondition = dto.VehicleCondition?.Trim() ?? string.Empty,
+                Diagnosis = dto.Diagnosis?.Trim() ?? string.Empty,
+                TechnicalNote = dto.TechnicalNote?.Trim() ?? string.Empty,
+                AssignedEmployee = dto.AssignedEmployee?.Trim() ?? string.Empty,
+                TechnicianName = dto.TechnicianName?.Trim() ?? string.Empty
             };
 
             _context.RepairOrders.Add(order);
@@ -90,6 +100,8 @@ namespace AutoGarageManager.Controllers
                 return BadRequest(ApiResponse<RepairOrder>.Failure("Trạng thái phiếu sửa không hợp lệ"));
 
             order.Status = status;
+            if (status == "Hoàn thành" && order.CompletedDate == null)
+                order.CompletedDate = DateTime.Now;
             await _context.SaveChangesAsync();
             return Ok(ApiResponse<RepairOrder>.SuccessResponse(order, "Cập nhật trạng thái phiếu sửa thành công"));
         }
@@ -105,6 +117,7 @@ namespace AutoGarageManager.Controllers
                 return BadRequest(ApiResponse<string>.Failure("Không thể hoàn thành phiếu sửa đã hủy"));
 
             order.Status = "Hoàn thành";
+            order.CompletedDate = DateTime.Now;
             await _context.SaveChangesAsync();
 
             return Ok(ApiResponse<string>.SuccessResponse(null, "Đã cập nhật trạng thái thành Hoàn thành"));

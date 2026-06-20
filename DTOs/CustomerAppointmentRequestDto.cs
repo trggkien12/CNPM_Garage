@@ -1,8 +1,16 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 
 namespace AutoGarageManager.DTOs
 {
+    public class SelectedAppointmentServiceDto
+    {
+        public int? ServiceId { get; set; }
+        public string? ServiceName { get; set; }
+        public decimal? Price { get; set; }
+    }
+
     public class CustomerAppointmentRequestDto
     {
         [StringLength(150)]
@@ -21,6 +29,8 @@ namespace AutoGarageManager.DTOs
         public string? ServiceName { get; set; }
 
         public decimal? EstimatedAmount { get; set; }
+
+        public List<SelectedAppointmentServiceDto>? Services { get; set; }
 
         [StringLength(100)]
         public string? SelectedTarget { get; set; }

@@ -1,13 +1,16 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using AutoGarageManager.Data;
 using AutoGarageManager.DTOs;
 using AutoGarageManager.Models;
+using AutoGarageManager.Helpers;
 
 namespace AutoGarageManager.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize]
     public class CustomersController : ControllerBase
     {
         private readonly GarageDbContext _context;
@@ -30,6 +33,7 @@ namespace AutoGarageManager.Controllers
                     c.Email,
                     c.PhoneNumber,
                     c.Address,
+                    c.IsEmailVerified,
                     Cars = _context.Cars.Count(x => x.CustomerId == c.Id)
                 }).ToListAsync();
 
@@ -43,7 +47,7 @@ namespace AutoGarageManager.Controllers
 
             var customer = await _context.Customers
                 .Where(c => c.Id == id)
-                .Select(c => new { c.Id, c.FullName, c.Email, c.PhoneNumber, c.Address })
+                .Select(c => new { c.Id, c.FullName, c.Email, c.PhoneNumber, c.Address, c.IsEmailVerified })
                 .FirstOrDefaultAsync();
 
             if (customer == null) return NotFound(ApiResponse.Failure("Không tìm thấy khách hàng"));
@@ -69,12 +73,13 @@ namespace AutoGarageManager.Controllers
                 Email = dto.Email,
                 PhoneNumber = dto.PhoneNumber,
                 Address = dto.Address,
-                Password = dto.Password
+                Password = PasswordHasher.HashPassword(dto.Password),
+                IsEmailVerified = true
             };
 
             _context.Customers.Add(customer);
             await _context.SaveChangesAsync();
-            return Ok(ApiResponse.SuccessResponse(new { customer.Id, customer.FullName, customer.Email, customer.PhoneNumber, customer.Address }, "Thêm khách hàng thành công"));
+            return Ok(ApiResponse.SuccessResponse(new { customer.Id, customer.FullName, customer.Email, customer.PhoneNumber, customer.Address, customer.IsEmailVerified }, "Thêm khách hàng thành công"));
         }
 
         [HttpPut("{id}")]
@@ -100,7 +105,7 @@ namespace AutoGarageManager.Controllers
             customer.Address = dto.Address;
             await _context.SaveChangesAsync();
 
-            return Ok(ApiResponse.SuccessResponse(new { customer.Id, customer.FullName, customer.Email, customer.PhoneNumber, customer.Address }, "Cập nhật khách hàng thành công"));
+            return Ok(ApiResponse.SuccessResponse(new { customer.Id, customer.FullName, customer.Email, customer.PhoneNumber, customer.Address, customer.IsEmailVerified }, "Cập nhật khách hàng thành công"));
         }
 
         [HttpDelete("{id}")]
@@ -112,6 +117,15 @@ namespace AutoGarageManager.Controllers
 
             var hasCars = await _context.Cars.AnyAsync(c => c.CustomerId == id);
             if (hasCars) return BadRequest(ApiResponse.Failure("Không thể xóa khách hàng đã có xe trong hệ thống"));
+
+            var hasAppointments = await _context.Appointments.AnyAsync(a => a.CustomerId == id && a.Status != "Đã hủy" && a.Status != "Đã từ chối");
+            if (hasAppointments) return BadRequest(ApiResponse.Failure("Không thể xóa khách hàng đang có lịch hẹn"));
+
+            var hasInvoices = await _context.Invoices
+                .Include(i => i.RepairOrder)
+                .ThenInclude(r => r.Car)
+                .AnyAsync(i => i.RepairOrder != null && i.RepairOrder.Car != null && i.RepairOrder.Car.CustomerId == id);
+            if (hasInvoices) return BadRequest(ApiResponse.Failure("Không thể xóa khách hàng đã có hóa đơn"));
 
             _context.Customers.Remove(customer);
             await _context.SaveChangesAsync();

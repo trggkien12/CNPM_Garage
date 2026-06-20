@@ -28,8 +28,9 @@
             box-shadow: 0 4px 20px rgba(0,0,0,0.03); border-bottom: 1px solid var(--border);
         }
         .logo { display: flex; align-items: center; gap: 12px; font-weight: 900; font-size: 22px; color: var(--text-main); letter-spacing: -0.5px;}
+        .logo { transform: translateX(-25px); }
         .logo span { color: var(--primary); }
-        .logo img { width: 42px; height: 42px; border-radius: 12px; object-fit: cover; box-shadow: 0 4px 10px rgba(37,99,235,0.2);}
+        .logo img { width: 100px; height: auto; border-radius: 12px; object-fit: cover; }
         
         nav { display: flex; gap: 5px; }
         nav button {
@@ -322,8 +323,8 @@
 
     <header>
         <div class="logo">
-            <img src="/img/tt1.jpg" onerror="this.src='https://ui-avatars.com/api/?name=KK&background=2563eb&color=fff'" alt="Logo">
-            <span>TH2K</span> 
+            <img src="img/tt1.jpg" onerror="this.src='https://ui-avatars.com/api/?name=KK&background=2563eb&color=fff'" alt="Logo">
+            
         </div>
         <nav>
             <button onclick="nav('home')" id="btn-home" class="active"><i class="fa-solid fa-house"></i> Trang chủ</button>
@@ -520,16 +521,12 @@
                 
                 <div class="option-grid">
                     <div class="option-card active" onclick="selectBookingType(this, 'Xem xe tại showroom')">
-                        <b><i class="fa-solid fa-eye" style="color: var(--primary); margin-right: 8px;"></i> Xem xe tại showroom</b>
-                        <p style="font-size: 13px; color: var(--text-muted); margin-top: 8px;">Đến trực tiếp Gara để nhận tư vấn.</p>
+                        <b><i class="fa-solid fa-magnifying-glass-chart" style="color: var(--primary); margin-right: 8px;"></i> Xem xe tại showroom</b>
+                        <p style="font-size: 13px; color: var(--text-muted); margin-top: 8px;">Mang xe tới kiểm tra, tư vấn sửa chữa và đánh giá tình trạng xe.</p>
                     </div>
-                    <div class="option-card" onclick="selectBookingType(this, 'Lái thử xe (Test Drive)')">
-                        <b><i class="fa-solid fa-steering-wheel" style="color: var(--primary); margin-right: 8px;"></i> Lái thử xe</b>
-                        <p style="font-size: 13px; color: var(--text-muted); margin-top: 8px;">Trải nghiệm cảm giác lái thực tế.</p>
-                    </div>
-                    <div class="option-card" onclick="selectBookingType(this, 'Bảo dưỡng / Sửa chữa')">
-                        <b><i class="fa-solid fa-wrench" style="color: var(--primary); margin-right: 8px;"></i> Bảo dưỡng định kỳ</b>
-                        <p style="font-size: 13px; color: var(--text-muted); margin-top: 8px;">Chăm sóc xe theo tiêu chuẩn.</p>
+                    <div class="option-card" onclick="selectBookingType(this, 'Bảo dưỡng định kỳ / sửa chữa')">
+                        <b><i class="fa-solid fa-wrench" style="color: var(--primary); margin-right: 8px;"></i> Bảo dưỡng / Sửa chữa</b>
+                        <p style="font-size: 13px; color: var(--text-muted); margin-top: 8px;">Chọn một hoặc nhiều dịch vụ sửa chữa, bảo dưỡng và chăm sóc xe.</p>
                     </div>
                 </div>
 
@@ -544,15 +541,21 @@
                     </select>
                 </div>
 
-                <div class="input-group">
+                <div class="input-group" id="booking-service-group">
                     <label>Chọn dịch vụ sửa chữa</label>
                     <select id="booking-service-select">
                         <option>Đang tải danh sách dịch vụ...</option>
                     </select>
+                    <button class="btn-cart" type="button" style="margin-top:10px; width:100%; padding:14px;" onclick="addSelectedServiceToCart()"><i class="fa-solid fa-plus"></i> Thêm dịch vụ vào danh sách</button>
+                    <div style="margin-top:12px; padding:14px; border:1px dashed var(--border); border-radius:14px; background:#f8fafc;">
+                        <b>Dịch vụ đã chọn: <span id="booking-selected-count">0</span></b>
+                        <div id="booking-selected-services" style="margin-top:10px; color:var(--text-muted); font-size:14px;">Chưa chọn dịch vụ nào.</div>
+                        <div style="margin-top:10px; font-size:18px; font-weight:900; color:var(--primary);">Tổng tạm tính: <span id="booking-estimated-total">0đ</span></div>
+                    </div>
                 </div>
                 <div class="input-group">
-                    <label>Ghi chú thêm (Tùy chọn)</label>
-                    <input type="text" id="booking-note" placeholder="Ví dụ: Tôi muốn bảo dưỡng thay dầu...">
+                    <label id="booking-note-label">Ghi chú tình trạng xe / yêu cầu thêm</label>
+                    <input type="text" id="booking-note" placeholder="Ví dụ: Xe có tiếng kêu khi phanh, cần kiểm tra tổng quát...">
                 </div>
                 
                 <button class="btn-solid" style="background: var(--text-main); color: white; width: 100%; margin-top: 20px; font-size: 16px; padding: 18px; justify-content: center;" onclick="submitBooking()">
@@ -593,6 +596,10 @@
                     <div class="input-group">
                         <label>Tên đăng nhập / Email</label>
                         <input type="text" id="prof-user" readonly style="background: #f1f5f9; cursor: not-allowed; color: var(--text-muted);">
+                    </div>
+                    <div class="input-group">
+                        <label>Email</label>
+                        <input type="text" id="prof-email" readonly style="background: #f1f5f9; cursor: not-allowed; color: var(--text-muted);">
                     </div>
                     <div class="input-group">
                         <label>Họ và Tên</label>
@@ -669,10 +676,10 @@
         <div>
             <div class="footer-title">Hỗ trợ Khách hàng</div>
             <p class="footer-text" style="cursor: pointer; line-height: 2.2;">
-                Hướng dẫn đặt lịch sửa xe<br>
-                Chính sách bảo hành toàn quốc<br>
-                Bảng giá dịch vụ niêm yết<br>
-                Đặt lịch sửa chữa trực tuyến
+                <span onclick="showSupportContent('guide')">Hướng dẫn đặt lịch sửa xe</span><br>
+                <span onclick="showSupportContent('warranty')">Chính sách bảo hành toàn quốc</span><br>
+                <span onclick="showSupportContent('price')">Bảng giá dịch vụ niêm yết</span><br>
+                <span onclick="nav('book')">Đặt lịch sửa chữa trực tuyến</span>
             </p>
         </div>
         <div>

@@ -2,11 +2,13 @@ using AutoGarageManager.Data;
 using AutoGarageManager.DTOs;
 using AutoGarageManager.Models;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 
 namespace AutoGarageManager.Controllers
 {
     [ApiController]
+    [Authorize]
     [Route("api/[controller]")]
     public class CarsController : ControllerBase
     {

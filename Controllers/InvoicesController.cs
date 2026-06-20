@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using AutoGarageManager.Data;
 using AutoGarageManager.DTOs;
@@ -8,6 +9,7 @@ using AutoGarageManager.Services;
 namespace AutoGarageManager.Controllers
 {
     [ApiController]
+    [Authorize]
     [Route("api/[controller]")]
     public class InvoicesController : ControllerBase
     {
@@ -35,14 +37,27 @@ namespace AutoGarageManager.Controllers
             if (existedInvoice != null)
                 return BadRequest(ApiResponse.Failure("Phiếu sửa này đã có hóa đơn", existedInvoice));
 
-            decimal total = await _repairOrderService.CalculateTotalCost(repairOrderId);
+            decimal laborAmount = await _repairOrderService.CalculateServiceCost(repairOrderId);
+            decimal partAmount = await _repairOrderService.CalculatePartCost(repairOrderId);
+            decimal discountAmount = 0;
+            decimal vatPercent = 0;
+            decimal subTotal = laborAmount + partAmount - discountAmount;
+            decimal vatAmount = Math.Round(subTotal * vatPercent / 100m, 0);
+            decimal total = subTotal + vatAmount;
             if (total <= 0)
                 return BadRequest(ApiResponse.Failure("Không thể tạo hóa đơn vì phiếu sửa chưa có dịch vụ hoặc phụ tùng"));
 
             var invoice = new Invoice
             {
                 RepairOrderId = repairOrderId,
+                LaborAmount = laborAmount,
+                PartAmount = partAmount,
+                DiscountAmount = discountAmount,
+                VatPercent = vatPercent,
+                VatAmount = vatAmount,
                 TotalAmount = total,
+                PaidAmount = 0,
+                RemainingAmount = total,
                 Status = "Chưa thanh toán",
                 CreatedAt = DateTime.Now
             };
@@ -68,7 +83,14 @@ namespace AutoGarageManager.Controllers
                     i.InvoiceId,
                     Id = i.InvoiceId,
                     i.RepairOrderId,
+                    i.LaborAmount,
+                    i.PartAmount,
+                    i.DiscountAmount,
+                    i.VatPercent,
+                    i.VatAmount,
                     i.TotalAmount,
+                    StoredPaidAmount = i.PaidAmount,
+                    StoredRemainingAmount = i.RemainingAmount,
                     Amount = i.TotalAmount,
                     Price = i.TotalAmount,
                     i.CreatedAt,
@@ -80,7 +102,8 @@ namespace AutoGarageManager.Controllers
                     InvoiceStatus = i.Status,
                     CustomerName = i.RepairOrder != null && i.RepairOrder.Car != null && i.RepairOrder.Car.Customer != null ? i.RepairOrder.Car.Customer.FullName : ExtractNoteValue(i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => p.Note).FirstOrDefault(), "CUSTOMER_NAME") ?? "Khách hàng",
                     CustomerAccount = i.RepairOrder != null && i.RepairOrder.Car != null && i.RepairOrder.Car.Customer != null ? (string.IsNullOrWhiteSpace(i.RepairOrder.Car.Customer.PhoneNumber) ? i.RepairOrder.Car.Customer.Email : i.RepairOrder.Car.Customer.PhoneNumber) : ExtractNoteValue(i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => p.Note).FirstOrDefault(), "CUSTOMER_ACCOUNT") ?? "",
-                    ServiceName = ExtractNoteValue(i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => p.Note).FirstOrDefault(), "SERVICE") ?? "Hóa đơn dịch vụ",
+                    ServiceName = ExtractNoteValue(i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => p.Note).FirstOrDefault(), "SERVICE") 
+                        ?? (i.RepairOrder != null && !string.IsNullOrWhiteSpace(i.RepairOrder.ProblemDescription) ? i.RepairOrder.ProblemDescription : "Hóa đơn dịch vụ"),
                     LocalOrderId = ExtractNoteValue(i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => p.Note).FirstOrDefault(), "LOCAL_ORDER_ID"),
                     LatestPaymentId = i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => (int?)p.PaymentId).FirstOrDefault(),
                     LatestPaymentStatus = i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => p.Status).FirstOrDefault(),
@@ -107,6 +130,47 @@ namespace AutoGarageManager.Controllers
 
             return Ok(ApiResponse.SuccessResponse(invoices));
         }
+
+        [HttpGet("my")]
+        public async Task<IActionResult> GetMyInvoices()
+        {
+            var customerIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (!int.TryParse(customerIdClaim, out var customerId))
+                return Unauthorized(ApiResponse.Failure("Phiên đăng nhập không hợp lệ"));
+
+            var invoices = await _context.Invoices
+                .Include(i => i.RepairOrder)
+                    .ThenInclude(r => r.Car)
+                    .ThenInclude(c => c.Customer)
+                .Include(i => i.Payments)
+                .Where(i => i.RepairOrder != null && i.RepairOrder.Car != null && i.RepairOrder.Car.CustomerId == customerId)
+                .OrderByDescending(i => i.CreatedAt)
+                .Select(i => new
+                {
+                    i.InvoiceId,
+                    Id = i.InvoiceId,
+                    i.RepairOrderId,
+                    i.TotalAmount,
+                    Amount = i.TotalAmount,
+                    i.CreatedAt,
+                    PaidAmount = i.Payments.Where(p => p.Status == StatusConfirmed).Sum(p => p.Amount),
+                    PendingAmount = i.Payments.Where(p => p.Status == "Chờ xác nhận").Sum(p => p.Amount),
+                    RemainingAmount = i.TotalAmount - i.Payments.Where(p => p.Status == StatusConfirmed).Sum(p => p.Amount),
+                    Status = i.Status,
+                    CustomerName = i.RepairOrder.Car.Customer != null ? i.RepairOrder.Car.Customer.FullName : "Khách hàng",
+                    CustomerAccount = i.RepairOrder.Car.Customer != null ? (string.IsNullOrWhiteSpace(i.RepairOrder.Car.Customer.PhoneNumber) ? i.RepairOrder.Car.Customer.Email : i.RepairOrder.Car.Customer.PhoneNumber) : "",
+                    CustomerEmail = i.RepairOrder.Car.Customer != null ? i.RepairOrder.Car.Customer.Email : "",
+                    ServiceName = ExtractNoteValue(i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => p.Note).FirstOrDefault(), "SERVICE")
+                        ?? (i.RepairOrder != null && !string.IsNullOrWhiteSpace(i.RepairOrder.ProblemDescription) ? i.RepairOrder.ProblemDescription : "Hóa đơn dịch vụ"),
+                    LatestPaymentId = i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => (int?)p.PaymentId).FirstOrDefault(),
+                    LatestPaymentStatus = i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => p.Status).FirstOrDefault(),
+                    LatestPaymentMethod = i.Payments.OrderByDescending(p => p.PaymentDate).Select(p => p.PaymentMethod).FirstOrDefault()
+                })
+                .ToListAsync();
+
+            return Ok(ApiResponse.SuccessResponse(invoices));
+        }
+
 
         [HttpGet("{id}")]
         public async Task<IActionResult> GetInvoice(int id)
@@ -170,7 +234,9 @@ namespace AutoGarageManager.Controllers
             payment.ConfirmedBy = "Admin";
 
             var paidAmount = invoice.Payments.Where(p => p.Status == StatusConfirmed).Sum(p => p.Amount);
-            invoice.Status = paidAmount >= invoice.TotalAmount ? "Đã thanh toán" : "Chưa thanh toán";
+            invoice.PaidAmount = paidAmount;
+            invoice.RemainingAmount = Math.Max(0, invoice.TotalAmount - paidAmount);
+            invoice.Status = paidAmount >= invoice.TotalAmount ? "Đã thanh toán" : paidAmount > 0 ? "Thanh toán một phần" : "Chưa thanh toán";
 
             await _context.SaveChangesAsync();
             return Ok(ApiResponse.SuccessResponse(new { invoice, payment }, "Đã xác nhận thanh toán hóa đơn"));

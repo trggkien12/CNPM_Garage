@@ -1,11 +1,14 @@
+using System.Text;
 using AutoGarageManager.Data;
 using AutoGarageManager.Middleware;
-using AutoGarageManager.Services; // Gọi thêm thư mục Services
+using AutoGarageManager.Services;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Cấu hình CORS: Cho phép giao diện HTML truy cập API
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
@@ -16,31 +19,56 @@ builder.Services.AddCors(options =>
     });
 });
 
-// 2. ĐĂNG KÝ SERVICE: Bắt buộc phải có dòng này để InvoicesController dùng được hàm tính tiền
 builder.Services.AddScoped<RepairOrderService>();
+builder.Services.AddScoped<JwtTokenService>();
+builder.Services.AddScoped<IEmailService, EmailService>();
 
-// 3. Các dịch vụ cơ bản
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// 4. Kết nối Database
 builder.Services.AddDbContext<GarageDbContext>(options =>
-    options.UseSqlServer(
-        builder.Configuration.GetConnectionString("DefaultConnection")
-    )
+    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"))
+           .ConfigureWarnings(warnings =>
+               warnings.Ignore(RelationalEventId.PendingModelChangesWarning))
 );
+
+var jwt = builder.Configuration.GetSection("Jwt");
+var jwtKey = jwt["Key"] ?? "AutoGarageManager-Change-This-Key-To-A-Long-Secret-Key-2026";
+var jwtIssuer = jwt["Issuer"] ?? "AutoGarageManager";
+var jwtAudience = jwt["Audience"] ?? "AutoGarageManagerClient";
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = jwtIssuer,
+            ValidAudience = jwtAudience,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+            ClockSkew = TimeSpan.FromMinutes(2)
+        };
+    });
+
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("AdminOnly", policy => policy.RequireRole("admin"));
+    options.AddPolicy("StaffOnly", policy => policy.RequireRole("admin", "employee", "technician"));
+    options.AddPolicy("CustomerOrStaff", policy => policy.RequireRole("admin", "employee", "technician", "customer"));
+});
 
 var app = builder.Build();
 
-// 5. Khởi tạo Database nếu chưa có
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<GarageDbContext>();
-    db.Database.EnsureCreated();
+    db.Database.Migrate();
 }
 
-// 6. Cấu hình Pipeline (Middleware)
 app.UseGlobalExceptionHandler();
 
 if (app.Environment.IsDevelopment())
@@ -51,12 +79,11 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseDefaultFiles();
-// Cho phép load file tĩnh (HTML) và áp dụng CORS
 app.UseStaticFiles();
-app.UseCors(); 
+app.UseCors();
 
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
-
 app.Run();
